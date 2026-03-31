@@ -3,6 +3,60 @@ const supabase = require('../services/supabase');
 const { scrapeRecipe } = require('../services/scraper');
 const router = Router();
 
+function normalizeRecipePayload(body = {}, { partial = false } = {}) {
+  const title = typeof body.title === 'string' ? body.title.trim() : undefined;
+  const ingredients = Array.isArray(body.ingredients)
+    ? body.ingredients.map((item) => String(item).trim()).filter(Boolean)
+    : undefined;
+  const steps = Array.isArray(body.steps)
+    ? body.steps.map((item) => String(item).trim()).filter(Boolean)
+    : undefined;
+
+  const payload = {
+    title,
+    image_url: body.imageUrl ?? body.image_url ?? undefined,
+    prep_time: body.prepTime ?? body.prep_time ?? undefined,
+    servings: body.servings ?? undefined,
+    ingredients,
+    steps,
+    source_url: body.sourceUrl ?? body.source_url ?? undefined,
+  };
+
+  if (partial) {
+    const cleaned = {};
+    Object.entries(payload).forEach(([key, value]) => {
+      if (value !== undefined) {
+        cleaned[key] = value;
+      }
+    });
+    return cleaned;
+  }
+
+  return payload;
+}
+
+function validateRecipePayload(payload, { partial = false } = {}) {
+  if (!partial || payload.title !== undefined) {
+    if (!payload.title) {
+      return { error: 'Le titre est requis', field: 'title' };
+    }
+  }
+
+  if (!partial || payload.ingredients !== undefined) {
+    if (!Array.isArray(payload.ingredients) || payload.ingredients.length === 0) {
+      return { error: 'Les ingrédients sont requis', field: 'ingredients' };
+    }
+  }
+
+  if (!partial || payload.steps !== undefined) {
+    if (!Array.isArray(payload.steps) || payload.steps.length === 0) {
+      return { error: 'Les étapes sont requises', field: 'steps' };
+    }
+  }
+
+  return null;
+}
+
 // GET /api/recipes
 router.get('/', async (req, res) => {
   try {
@@ -35,20 +89,15 @@ router.get('/:id', async (req, res) => {
 // POST /api/recipes
 router.post('/', async (req, res) => {
   try {
-    const { title, imageUrl, prepTime, servings, ingredients, steps, sourceUrl } = req.body;
-    if (!title) return res.status(400).json({ error: 'Le titre est requis', field: 'title' });
-    if (!ingredients || ingredients.length === 0) return res.status(400).json({ error: 'Les ingrédients sont requis', field: 'ingredients' });
-    if (!steps || steps.length === 0) return res.status(400).json({ error: 'Les étapes sont requises', field: 'steps' });
+    const payload = normalizeRecipePayload(req.body);
+    const validationError = validateRecipePayload(payload);
+    if (validationError) return res.status(400).json(validationError);
 
-    const { data, error } = await supabase.from('recipes').insert([{
-      title,
-      image_url: imageUrl,
-      prep_time: prepTime,
-      servings,
-      ingredients,
-      steps,
-      source_url: sourceUrl,
-    }]).select().single();
+    const { data, error } = await supabase
+      .from('recipes')
+      .insert([payload])
+      .select()
+      .single();
 
     if (error) throw error;
     res.status(201).json(data);
@@ -98,7 +147,19 @@ router.post('/import', async (req, res) => {
 // PUT /api/recipes/:id
 router.put('/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('recipes').update(req.body).eq('id', req.params.id).select().single();
+    const payload = normalizeRecipePayload(req.body, { partial: true });
+    const validationError = validateRecipePayload(payload, { partial: true });
+    if (validationError) return res.status(400).json(validationError);
+    if (Object.keys(payload).length === 0) {
+      return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
+    }
+
+    const { data, error } = await supabase
+      .from('recipes')
+      .update(payload)
+      .eq('id', req.params.id)
+      .select()
+      .single();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Recette non trouvée' });
     res.json(data);
@@ -114,7 +175,12 @@ router.delete('/:id', async (req, res) => {
     // In a real app, you might want to set ON DELETE SET NULL or CASCADE in the DB
     await supabase.from('meal_plan').delete().eq('recipe_id', req.params.id);
     
-    const { data, error } = await supabase.from('recipes').delete().eq('id', req.params.id).select().single();
+    const { data, error } = await supabase
+      .from('recipes')
+      .delete()
+      .eq('id', req.params.id)
+      .select('id')
+      .maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Recette non trouvée' });
     res.status(204).send();
