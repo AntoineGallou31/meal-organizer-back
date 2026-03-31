@@ -9,7 +9,7 @@ const app = express();
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://meal-app.vercel.app'
+    'https://meal-organizer-front.vercel.app'
   ]
 }));
 app.use(express.json());
