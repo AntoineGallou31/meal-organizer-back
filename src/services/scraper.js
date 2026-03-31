@@ -1,168 +1,258 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
-const { parse, toSeconds } = require('iso8601-duration');
+const axios = require('axios')
+const cheerio = require('cheerio')
 
-function parseServings(text) {
-  if (!text) return null;
-  const match = text.match(/\d+/);
-  return match ? parseInt(match[0], 10) : null;
-}
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY
 
-function cleanString(s) {
-  return s.trim().replace(/[\r\n\t]/g, '').replace(/\s\s+/g, ' ');
-}
+// ─── Fetch avec fallbacks ────────────────────────────────────────────────────
 
-async function scrapeRecipe(url) {
-  const { data: html } = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-      'Accept-Language': 'fr-FR,fr;q=0.9',
-      'Accept': 'text/html',
-    },
-  });
-  const $ = cheerio.load(html);
+async function fetchPage(url) {
+  // Tentative 1 : fetch direct avec headers Chrome
+  try {
+    const res = await axios.get(url, {
+      timeout: 15000,
+      maxRedirects: 5,
+      decompress: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'Referer': 'https://www.google.fr/'
+      }
+    })
+    return { html: res.data, method: 'direct' }
+  } catch (err) {
+    const status = err.response?.status
+    const blocked = !status || [403, 429, 503, 520, 521, 522, 523, 524].includes(status)
+    if (!blocked) throw err
+    console.log(`Fetch direct bloqué (${status}), fallback ScraperAPI...`)
+  }
 
-  let recipe = {
-    title: '',
-    imageUrl: null,
-    prepTime: null,
-    servings: null,
-    ingredients: [],
-    steps: [],
-    sourceUrl: url,
-    partial: false,
-  };
-
-  // Method 1: JSON-LD
-  $('script[type="application/ld+json"]').each((i, el) => {
+  // Tentative 2 : ScraperAPI
+  if (SCRAPER_API_KEY) {
     try {
-      const json = JSON.parse($(el).html());
-      let recipeData = null;
+      const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=fr&render=true`
+      const res = await axios.get(scraperUrl, { timeout: 30000 })
+      return { html: res.data, method: 'scraperapi' }
+    } catch (err) {
+      console.log('ScraperAPI échoué, fallback Jina...')
+    }
+  }
 
-      const findRecipe = (obj) => {
-        if (obj['@type'] && (Array.isArray(obj['@type']) ? obj['@type'].includes('Recipe') : obj['@type'] === 'Recipe')) {
-          return obj;
-        }
-        if (obj['@graph']) {
-          for (const item of obj['@graph']) {
-            const found = findRecipe(item);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-      
-      recipeData = findRecipe(json);
+  // Tentative 3 : Jina AI Reader (gratuit, sans clé)
+  try {
+    const jinaUrl = `https://r.jina.ai/${url}`
+    const res = await axios.get(jinaUrl, {
+      timeout: 20000,
+      headers: { 'Accept': 'text/html' }
+    })
+    return { html: res.data, method: 'jina' }
+  } catch (err) {
+    throw new Error(`Impossible d'accéder à la page après 3 tentatives : ${url}`)
+  }
+}
 
-      if (recipeData) {
-        recipe.title = recipeData.name || recipe.title;
-        if (recipeData.image) {
-          recipe.imageUrl = recipeData.image.url || (Array.isArray(recipeData.image) ? recipeData.image[0]?.url || recipeData.image[0] : recipeData.image);
-        }
-        let totalDuration = 0;
-        if (recipeData.prepTime) totalDuration += toSeconds(parse(recipeData.prepTime));
-        if (recipeData.cookTime) totalDuration += toSeconds(parse(recipeData.cookTime));
-        if (totalDuration > 0) recipe.prepTime = Math.round(totalDuration / 60);
+// ─── Parsing JSON-LD schema.org ──────────────────────────────────────────────
 
-        if (recipeData.recipeYield) {
-            recipe.servings = parseServings(Array.isArray(recipeData.recipeYield) ? recipeData.recipeYield[0] : recipeData.recipeYield);
-        }
-        
-        if (recipeData.recipeIngredient) {
-          recipe.ingredients = recipeData.recipeIngredient.map(cleanString);
-        }
-        if (recipeData.recipeInstructions) {
-          recipe.steps = recipeData.recipeInstructions
-            .map(step => (typeof step === 'string' ? cleanString(step) : cleanString(step.text)))
-            .filter(Boolean);
-        }
-        if (recipe.ingredients.length > 0 && recipe.steps.length > 0) {
-          return false; // break cheerio loop
-        }
+function findRecipeInJsonLd(obj) {
+  if (!obj) return null
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const found = findRecipeInJsonLd(item)
+      if (found) return found
+    }
+    return null
+  }
+  if (typeof obj === 'object') {
+    const type = obj['@type']
+    if (type === 'Recipe' || (Array.isArray(type) && type.includes('Recipe'))) {
+      return obj
+    }
+    // Cherche dans @graph
+    if (obj['@graph']) return findRecipeInJsonLd(obj['@graph'])
+  }
+  return null
+}
+
+function parseIso8601Duration(duration) {
+  if (!duration) return null
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/)
+  if (!match) return null
+  const hours = parseInt(match[1] || 0)
+  const minutes = parseInt(match[2] || 0)
+  return hours * 60 + minutes || null
+}
+
+function extractImageUrl(image) {
+  if (!image) return null
+  if (typeof image === 'string') return image
+  if (Array.isArray(image)) return extractImageUrl(image[0])
+  if (typeof image === 'object') return image.url || image.contentUrl || null
+  return null
+}
+
+function extractServings(yieldVal) {
+  if (!yieldVal) return null
+  const str = Array.isArray(yieldVal) ? yieldVal[0] : String(yieldVal)
+  const match = str.match(/\d+/)
+  return match ? parseInt(match[0]) : null
+}
+
+function extractSteps(instructions) {
+  if (!instructions) return []
+  if (typeof instructions === 'string') return [instructions.trim()].filter(Boolean)
+  if (Array.isArray(instructions)) {
+    return instructions.map((step) => {
+      if (typeof step === 'string') return step.trim()
+      if (step['@type'] === 'HowToStep') return (step.text || step.name || '').trim()
+      if (step['@type'] === 'HowToSection') return extractSteps(step.itemListElement)
+      return ''
+    }).flat().filter(Boolean)
+  }
+  return []
+}
+
+function parseJsonLd($) {
+  const scripts = $('script[type="application/ld+json"]').toArray()
+  for (const script of scripts) {
+    try {
+      const json = JSON.parse($(script).html())
+      const recipe = findRecipeInJsonLd(json)
+      if (!recipe) continue
+
+      const prepTime = parseIso8601Duration(recipe.prepTime)
+      const cookTime = parseIso8601Duration(recipe.cookTime)
+      const totalTime = parseIso8601Duration(recipe.totalTime)
+
+      return {
+        title: recipe.name || null,
+        imageUrl: extractImageUrl(recipe.image),
+        prepTime: totalTime || (prepTime && cookTime ? prepTime + cookTime : prepTime || cookTime),
+        servings: extractServings(recipe.recipeYield),
+        ingredients: (recipe.recipeIngredient || []).map((s) => s.trim()).filter(Boolean),
+        steps: extractSteps(recipe.recipeInstructions)
       }
     } catch (e) {
-      // ignore json parse errors
+      continue
     }
-  });
-
-  if (recipe.ingredients.length > 0 && recipe.steps.length > 0) {
-    return recipe;
   }
-
-  // Method 2: Microdata
-  if (recipe.ingredients.length === 0) {
-    $('[itemprop="recipeIngredient"]').each((i, el) => {
-      recipe.ingredients.push(cleanString($(el).text()));
-    });
-  }
-  if (recipe.steps.length === 0) {
-    $('[itemprop="recipeInstructions"]').find('li, p').each((i, el) => {
-        const text = cleanString($(el).text());
-        if(text) recipe.steps.push(text);
-    });
-  }
-   if (!recipe.title) {
-    recipe.title = $('[itemprop="name"]').first().text();
-  }
-  if (!recipe.imageUrl) {
-    recipe.imageUrl = $('[itemprop="image"]').first().attr('src') || $('[itemprop="image"]').first().attr('content');
-  }
-
-
-  if (recipe.ingredients.length > 0 && recipe.steps.length > 0) {
-    return recipe;
-  }
-
-  // Method 3: Heuristics
-  if (recipe.ingredients.length === 0) {
-    $('h2, h3, section, div').each((i, el) => {
-        const title = $(el).text().toLowerCase();
-        if (title.includes('ingrédient')) {
-            $(el).parent().find('ul, ol').find('li').each((i, li) => {
-                recipe.ingredients.push(cleanString($(li).text()));
-            });
-            if(recipe.ingredients.length > 0) return false;
-        }
-    });
-  }
-  if (recipe.steps.length === 0) {
-     $('h2, h3, section, div').each((i, el) => {
-        const title = $(el).text().toLowerCase();
-        if (title.includes('préparation') || title.includes('instructions') || title.includes('étapes') || title.includes('recette')) {
-            let list = $(el).parent().find('ol, ul');
-            if(!list.length) list = $(el).nextAll('ol, ul').first();
-            
-            list.find('li').each((i, li) => {
-                recipe.steps.push(cleanString($(li).text()));
-            });
-            if(recipe.steps.length > 0) return false;
-        }
-    });
-  }
-    if (!recipe.imageUrl) {
-        $('img').each((i, el) => {
-            const src = $(el).attr('src');
-            const width = $(el).attr('width') || 0;
-            if (src && (parseInt(width) > 300 || src.includes('large') || src.includes('800'))) {
-                recipe.imageUrl = src;
-                return false;
-            }
-        });
-    }
-
-
-  recipe.ingredients = recipe.ingredients.filter(i => i.length > 0);
-  recipe.steps = recipe.steps.filter(s => s.length > 0);
-
-  if (recipe.ingredients.length === 0 && recipe.steps.length === 0) {
-    throw { message: "Impossible d'extraire la recette", partial: true };
-  }
-
-  if (recipe.ingredients.length === 0 || recipe.steps.length === 0) {
-    recipe.partial = true;
-  }
-
-  return recipe;
+  return null
 }
 
-module.exports = { scrapeRecipe };
+// ─── Parsing Microdata ───────────────────────────────────────────────────────
+
+function parseMicrodata($) {
+  const ingredients = $('[itemprop="recipeIngredient"], [itemprop="ingredients"]')
+    .map((_, el) => $(el).text().trim()).get().filter(Boolean)
+
+  const steps = $('[itemprop="recipeInstructions"] [itemprop="text"], [itemprop="recipeInstructions"]')
+    .map((_, el) => $(el).text().trim()).get().filter(Boolean)
+
+  if (ingredients.length === 0 && steps.length === 0) return null
+
+  return {
+    title: $('[itemprop="name"]').first().text().trim() || null,
+    imageUrl: $('[itemprop="image"]').first().attr('src') || $('[itemprop="image"]').first().attr('content') || null,
+    prepTime: null,
+    servings: null,
+    ingredients,
+    steps
+  }
+}
+
+// ─── Parsing heuristique CSS ─────────────────────────────────────────────────
+
+function parseHeuristic($) {
+  const ingrKeywords = /ingr[ée]dient|composant/i
+  const stepKeywords = /pr[ée]paration|instruction|[ée]tape|recette|r[ée]alisation/i
+
+  let ingredients = []
+  let steps = []
+
+  // Cherche les ingrédients
+  $('h2, h3, h4, strong, .title, [class*="title"], [class*="heading"]').each((_, el) => {
+    if (ingrKeywords.test($(el).text())) {
+      const list = $(el).nextAll('ul, ol').first()
+      if (list.length) {
+        ingredients = list.find('li').map((_, li) => $(li).text().trim()).get().filter(Boolean)
+        return false // break
+      }
+    }
+  })
+
+  // Cherche les étapes
+  $('h2, h3, h4, strong, .title, [class*="title"], [class*="heading"]').each((_, el) => {
+    if (stepKeywords.test($(el).text())) {
+      const list = $(el).nextAll('ol, ul').first()
+      if (list.length) {
+        steps = list.find('li').map((_, li) => $(li).text().trim()).get().filter(Boolean)
+        return false
+      }
+    }
+  })
+
+  // Fallback : chercher par classes CSS communes
+  if (ingredients.length === 0) {
+    const sel = $('[class*="ingredient"], [class*="ingr"]')
+    if (sel.length) ingredients = sel.map((_, el) => $(el).text().trim()).get().filter(Boolean)
+  }
+  if (steps.length === 0) {
+    const sel = $('[class*="step"], [class*="instruction"], [class*="direction"]')
+    if (sel.length) steps = sel.map((_, el) => $(el).text().trim()).get().filter(Boolean)
+  }
+
+  if (ingredients.length === 0 && steps.length === 0) return null
+
+  return {
+    title: $('h1').first().text().trim() || $('title').text().trim() || null,
+    imageUrl: $('meta[property="og:image"]').attr('content') || null,
+    prepTime: null,
+    servings: null,
+    ingredients,
+    steps
+  }
+}
+
+// ─── Fonction principale ─────────────────────────────────────────────────────
+
+async function scrapeRecipe(url) {
+  const { html } = await fetchPage(url)
+  const $ = cheerio.load(html)
+
+  // Cascade de parsers
+  const result = parseJsonLd($)
+    ?? parseMicrodata($)
+    ?? parseHeuristic($)
+
+  if (!result) {
+    return {
+      title: $('h1').first().text().trim() || null,
+      imageUrl: $('meta[property="og:image"]').attr('content') || null,
+      prepTime: null,
+      servings: null,
+      ingredients: [],
+      steps: [],
+      sourceUrl: url,
+      partial: true
+    }
+  }
+
+  const partial = result.ingredients.length === 0 || result.steps.length === 0
+
+  return {
+    ...result,
+    title: result.title || $('h1').first().text().trim() || 'Recette sans titre',
+    imageUrl: result.imageUrl || $('meta[property="og:image"]').attr('content') || null,
+    sourceUrl: url,
+    partial
+  }
+}
+
+module.exports = { scrapeRecipe }
