@@ -2,6 +2,8 @@ const { Router } = require('express');
 const supabase = require('../services/supabase');
 const router = Router();
 
+const MANUAL_TEXT_COLUMNS = ['manual_text', 'manual_note', 'custom_text', 'text'];
+
 const getWeekDays = (weekString) => {
     const [year, weekNum] = weekString.split('-W').map(Number);
     const d = new Date(Date.UTC(year, 0, 1 + (weekNum - 1) * 7));
@@ -21,6 +23,27 @@ const getWeekDays = (weekString) => {
 const getDayName = (date, locale = 'fr-FR') => {
     return new Date(date).toLocaleDateString(locale, { weekday: 'long' });
 }
+
+const extractManualText = (mealPlanRow) => {
+    if (!mealPlanRow) {
+        return null;
+    }
+
+    const value = MANUAL_TEXT_COLUMNS
+        .map((column) => mealPlanRow[column])
+        .find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0);
+
+    return value ?? null;
+};
+
+const isMissingColumnError = (error) => {
+    const message = (error?.message ?? '').toLowerCase();
+    return message.includes('column') && (
+        message.includes('does not exist') ||
+        message.includes('not found') ||
+        message.includes('schema cache')
+    );
+};
 
 // GET /api/meal-plan?week=YYYY-Www
 router.get('/', async (req, res) => {
@@ -50,7 +73,9 @@ router.get('/', async (req, res) => {
                 date,
                 dayName: getDayName(date),
                 lunch: lunch ? lunch.recipes : null,
+                lunchManualText: extractManualText(lunch),
                 dinner: dinner ? dinner.recipes : null,
+                dinnerManualText: extractManualText(dinner),
             };
         });
 
@@ -64,22 +89,67 @@ router.get('/', async (req, res) => {
 // POST /api/meal-plan
 router.post('/', async (req, res) => {
     try {
-        const { date, slot, recipeId } = req.body;
-        if (!date || !slot || !recipeId) {
-            return res.status(400).json({ error: 'date, slot et recipeId sont requis' });
+        const { date, slot, recipeId, manualText } = req.body;
+        const hasRecipeId = recipeId !== undefined && recipeId !== null && String(recipeId).trim() !== '';
+        const normalizedManualText = typeof manualText === 'string' ? manualText.trim() : '';
+        const hasManualText = normalizedManualText.length > 0;
+
+        if (!date || !slot) {
+            return res.status(400).json({ error: 'date et slot sont requis' });
+        }
+        if ((hasRecipeId && hasManualText) || (!hasRecipeId && !hasManualText)) {
+            return res.status(400).json({ error: 'Fournir soit recipeId, soit manualText' });
         }
         if (slot !== 'lunch' && slot !== 'dinner') {
             return res.status(400).json({ error: 'slot doit être "lunch" ou "dinner"' });
         }
 
-        const { data, error } = await supabase
-            .from('meal_plan')
-            .upsert({ date, slot, recipe_id: recipeId }, { onConflict: 'date, slot' })
-            .select('*, recipes(*)')
-            .single();
+        const basePayload = { date, slot };
 
-        if (error) throw error;
-        res.status(201).json(data);
+        if (hasRecipeId) {
+            const recipePayload = { ...basePayload, recipe_id: recipeId };
+            const candidateColumns = [...MANUAL_TEXT_COLUMNS, null];
+
+            for (const column of candidateColumns) {
+                const payload = column
+                    ? { ...recipePayload, [column]: null }
+                    : recipePayload;
+                const { data, error } = await supabase
+                    .from('meal_plan')
+                    .upsert(payload, { onConflict: 'date, slot' })
+                    .select('*, recipes(*)')
+                    .single();
+
+                if (!error) {
+                    return res.status(201).json(data);
+                }
+
+                if (!isMissingColumnError(error) || !column) {
+                    throw error;
+                }
+            }
+        }
+
+        for (const column of MANUAL_TEXT_COLUMNS) {
+            const payload = { ...basePayload, recipe_id: null, [column]: normalizedManualText };
+            const { data, error } = await supabase
+                .from('meal_plan')
+                .upsert(payload, { onConflict: 'date, slot' })
+                .select('*, recipes(*)')
+                .single();
+
+            if (!error) {
+                return res.status(201).json(data);
+            }
+
+            if (!isMissingColumnError(error)) {
+                throw error;
+            }
+        }
+
+        return res.status(500).json({
+            error: 'Aucune colonne texte compatible trouvée dans meal_plan (manual_text/manual_note/custom_text/text)',
+        });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Erreur base de données' });
