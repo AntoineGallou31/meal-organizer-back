@@ -1,2 +1,15 @@
 .env.example
 .env
+/node_modules
+/dist
+/build
+/coverage
+/.vscode
+.DS_Store
+.idea
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.zip
