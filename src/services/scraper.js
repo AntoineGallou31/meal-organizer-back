@@ -2,6 +2,29 @@ const axios = require('axios')
 const cheerio = require('cheerio')
 
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY
+const SHORT_LINK_DOMAINS = ['pin.it', 'bit.ly', 'tinyurl.com', 'shorturl.at', 'ow.ly', 'buff.ly', 't.co']
+
+function isShortLink(url) {
+  return SHORT_LINK_DOMAINS.some(domain => url.includes(domain))
+}
+
+async function resolveUrl(url) {
+  if (!isShortLink(url)) return url
+
+  try {
+    const res = await axios.get(url, {
+      timeout: 10000,
+      maxRedirects: 10,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    })
+    return res.request.res.responseUrl || res.config.url || url
+  } catch (err) {
+    if (err.request?.res?.responseUrl) return err.request.res.responseUrl
+    throw new Error(`Impossible de résoudre le lien Pinterest : ${url}`)
+  }
+}
 
 // ─── Fetch avec fallbacks ────────────────────────────────────────────────────
 
@@ -222,7 +245,9 @@ function parseHeuristic($) {
 
 // ─── Fonction principale ─────────────────────────────────────────────────────
 
-async function scrapeRecipe(url) {
+async function scrapeRecipe(rawUrl) {
+  const url = await resolveUrl(rawUrl)
+  console.log(`URL résolue : ${url}`)
   const { html } = await fetchPage(url)
   const $ = cheerio.load(html)
 
