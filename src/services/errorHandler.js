@@ -25,13 +25,14 @@ function handleError(error, res, context = {}) {
   });
 
   const isDevelopment = process.env.NODE_ENV === 'development';
+  const showDetails = isDevelopment || error.code === 'FETCH_RECIPES_ERROR' || error.code === 'DATABASE_ERROR';
 
   // If it's already an APIError, use it directly
   if (error instanceof APIError) {
     return res.status(error.statusCode).json({
       error: error.message,
       code: error.code,
-      ...(isDevelopment && error.details && { details: error.details }),
+      ...(showDetails && error.details && { details: error.details }),
       timestamp: error.timestamp,
     });
   }
@@ -41,6 +42,7 @@ function handleError(error, res, context = {}) {
     return res.status(409).json({
       error: 'Cette ressource existe déjà',
       code: 'DUPLICATE_RESOURCE',
+      details: error.message,
       timestamp: new Date().toISOString(),
     });
   }
@@ -49,6 +51,7 @@ function handleError(error, res, context = {}) {
     return res.status(400).json({
       error: 'Référence invalide vers une autre ressource',
       code: 'INVALID_REFERENCE',
+      details: error.message,
       timestamp: new Date().toISOString(),
     });
   }
@@ -57,7 +60,17 @@ function handleError(error, res, context = {}) {
     return res.status(400).json({
       error: 'Les données ne respectent pas les contraintes de la base de données',
       code: 'CONSTRAINT_VIOLATION',
-      ...(isDevelopment && { details: error.message }),
+      details: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Handle column not found error
+  if (error.message && (error.message.includes('column') || error.message.includes('does not exist'))) {
+    return res.status(500).json({
+      error: 'Erreur de schéma de base de données - colonne manquante',
+      code: 'SCHEMA_ERROR',
+      details: error.message,
       timestamp: new Date().toISOString(),
     });
   }
@@ -76,7 +89,7 @@ function handleError(error, res, context = {}) {
     return res.status(400).json({
       error: 'Format de données invalide',
       code: 'INVALID_DATA_FORMAT',
-      ...(isDevelopment && { details: error.message }),
+      ...(showDetails && { details: error.message }),
       timestamp: new Date().toISOString(),
     });
   }
@@ -86,7 +99,7 @@ function handleError(error, res, context = {}) {
     return res.status(500).json({
       error: 'Erreur lors de l\'accès à la base de données',
       code: 'DATABASE_ERROR',
-      ...(isDevelopment && { details: error.message }),
+      ...(showDetails && { details: error.message }),
       timestamp: new Date().toISOString(),
     });
   }
@@ -95,7 +108,7 @@ function handleError(error, res, context = {}) {
   return res.status(500).json({
     error: 'Une erreur interne s\'est produite',
     code: 'INTERNAL_SERVER_ERROR',
-    ...(isDevelopment && { details: error.message, stack: error.stack }),
+    ...(showDetails && { details: error.message, stack: error.stack }),
     timestamp: new Date().toISOString(),
   });
 }

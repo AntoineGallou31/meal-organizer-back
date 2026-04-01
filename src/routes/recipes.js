@@ -51,7 +51,7 @@ function mapRecipeWithCategories(recipe) {
 async function fetchRecipeWithCategoriesById(recipeId) {
   const { data, error } = await supabase
     .from('recipes')
-    .select('id,title,image_url,prep_time,servings,ingredients,steps,seasons,source_url,created_at,recipe_categories(categories(id,name,color))')
+    .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,created_at,recipe_categories(categories(id,name,color))')
     .eq('id', recipeId)
     .maybeSingle();
 
@@ -266,7 +266,7 @@ router.get('/recipes', async (req, res) => {
       }
     }
 
-    const selectString = `id,title,image_url,prep_time,servings,ingredients,steps,seasons,source_url,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
+    const selectString = `id,title,image_url,prep_time,servings,ingredients,steps,source_url,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
     let query = supabase.from('recipes').select(selectString);
 
     if (search) {
@@ -323,7 +323,7 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
     if (recipeCategoryIds.length) {
       const { data: similar, error: similarError } = await supabase
         .from('recipes')
-        .select('id,title,image_url,prep_time,servings,ingredients,steps,seasons,source_url,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
+        .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
         .neq('id', req.params.id)
         .in('recipe_categories.category_id', recipeCategoryIds)
         .order('created_at', { ascending: false })
