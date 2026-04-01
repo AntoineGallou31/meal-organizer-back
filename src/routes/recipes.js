@@ -10,6 +10,15 @@ const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
+// Simple UUID v4 generator for compatibility
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SEASON_INGREDIENTS = {
   spring: ['asperge', 'petit pois', 'radis', 'epinard', 'fraise', 'artichaut', 'feve'],
@@ -93,14 +102,25 @@ async function processImport(jobId, urls = []) {
         console.log(`[Import Job ${jobId}] Processing URL ${i + 1}/${urls.length}: ${url}`);
         const recipe = await scrapeRecipe(url);
         
+        // Validate and normalize the recipe data
+        const title = recipe.title ? String(recipe.title).trim() : null;
+        
+        // Skip recipes without a title
+        if (!title) {
+          results.failed += 1;
+          results.errors.push({ url, message: 'Titre introuvable' });
+          console.error(`[Import Job ${jobId}] ✗ Failed: ${url} - Titre introuvable`);
+          continue;
+        }
+        
         const payload = {
-          title: recipe.title,
-          image_url: recipe.imageUrl,
-          prep_time: recipe.prepTime,
-          servings: recipe.servings,
-          ingredients: recipe.ingredients,
-          steps: recipe.steps,
-          source_url: recipe.sourceUrl,
+          title,
+          image_url: recipe.imageUrl || null,
+          prep_time: recipe.prepTime || null,
+          servings: recipe.servings || null,
+          ingredients: Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0 ? recipe.ingredients : [],
+          steps: Array.isArray(recipe.steps) && recipe.steps.length > 0 ? recipe.steps : [],
+          source_url: url,
         };
 
         const { data: inserted, error: insertError } = await supabase
@@ -111,20 +131,20 @@ async function processImport(jobId, urls = []) {
 
         if (insertError) throw insertError;
 
-        const detection = await detectCategory(recipe.title, recipe.ingredients);
+        const detection = await detectCategory(title, payload.ingredients);
         await assignCategoryToRecipe(inserted.id, detection.id);
 
         if (!detection.confident) {
           results.needsReview.push({
             recipeId: inserted.id,
-            recipeTitle: recipe.title,
+            recipeTitle: title,
             assignedCategory: detection.name,
           });
         }
 
         results.success += 1;
         results.created.push(inserted);
-        console.log(`[Import Job ${jobId}] ✓ Success: ${recipe.title}`);
+        console.log(`[Import Job ${jobId}] ✓ Success: ${title}`);
       } catch (error) {
         results.failed += 1;
         const errorMsg = error.message || 'Import impossible';
@@ -506,7 +526,7 @@ router.post('/recipes/import-pinterest-export', async (req, res) => {
       throw new APIError('Aucune URL détectée dans le fichier', 400, 'NO_URLS_FOUND');
     }
 
-    const jobId = require('crypto').randomUUID();
+    const jobId = generateUUID();
 
     const { data: job, error } = await supabase
       .from('job_status')
