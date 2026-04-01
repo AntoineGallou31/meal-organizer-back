@@ -9,7 +9,7 @@ function isShortLink(url) {
 }
 
 async function resolveUrl(url) {
-  if (!isShortLink(url)) return url
+  if (!isShortLink(url) && !url.includes('pinterest.com')) return url
 
   try {
     const res = await axios.get(url, {
@@ -19,10 +19,28 @@ async function resolveUrl(url) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
       }
     })
-    return res.request.res.responseUrl || res.config.url || url
+
+    const finalUrl = res.request?.res?.responseUrl || res.config.url || url
+
+    // Pinterest peut être une étape intermédiaire : on tente d'extraire le lien source.
+    if (finalUrl.includes('pinterest.com')) {
+      const $ = cheerio.load(typeof res.data === 'string' ? res.data : '')
+      const externalUrl = $('meta[property="og:see_also"]').attr('content')
+        || $('a[data-test-id="pin-closeup-link"]').attr('href')
+        || $('a[href*="http"]').filter((_, el) => {
+          const href = $(el).attr('href') || ''
+          return href.startsWith('http') && !href.includes('pinterest.com')
+        }).first().attr('href')
+
+      if (externalUrl && !externalUrl.includes('pinterest.com')) {
+        return externalUrl
+      }
+    }
+
+    return finalUrl
   } catch (err) {
     if (err.request?.res?.responseUrl) return err.request.res.responseUrl
-    throw new Error(`Impossible de résoudre le lien Pinterest : ${url}`)
+    throw new Error(`Impossible de résoudre le lien : ${url}`)
   }
 }
 
@@ -53,9 +71,7 @@ async function fetchPage(url) {
     return { html: res.data, method: 'direct' }
   } catch (err) {
     const status = err.response?.status
-    const blocked = !status || [403, 429, 503, 520, 521, 522, 523, 524].includes(status)
-    if (!blocked) throw err
-    console.log(`Fetch direct bloqué (${status}), fallback ScraperAPI...`)
+    console.log(`Fetch direct échoué (${status ?? 'réseau'}), fallback ScraperAPI...`)
   }
 
   // Tentative 2 : ScraperAPI
@@ -74,9 +90,9 @@ async function fetchPage(url) {
     const jinaUrl = `https://r.jina.ai/${url}`
     const res = await axios.get(jinaUrl, {
       timeout: 20000,
-      headers: { 'Accept': 'text/html' }
+      headers: { 'Accept': 'text/markdown,text/plain;q=0.9,*/*;q=0.8' }
     })
-    return { html: res.data, method: 'jina' }
+    return { html: res.data, method: 'jina', isMarkdown: true }
   } catch (err) {
     throw new Error(`Impossible d'accéder à la page après 3 tentatives : ${url}`)
   }
@@ -175,8 +191,10 @@ function parseMicrodata($) {
   const ingredients = $('[itemprop="recipeIngredient"], [itemprop="ingredients"]')
     .map((_, el) => $(el).text().trim()).get().filter(Boolean)
 
-  const steps = $('[itemprop="recipeInstructions"] [itemprop="text"], [itemprop="recipeInstructions"]')
-    .map((_, el) => $(el).text().trim()).get().filter(Boolean)
+  const stepsEl = $('[itemprop="recipeInstructions"] [itemprop="text"]')
+  const steps = stepsEl.length
+    ? stepsEl.map((_, el) => $(el).text().trim()).get().filter(Boolean)
+    : $('[itemprop="recipeInstructions"]').map((_, el) => $(el).text().trim()).get().filter(Boolean)
 
   if (ingredients.length === 0 && steps.length === 0) return null
 
@@ -231,6 +249,9 @@ function parseHeuristic($) {
     if (sel.length) steps = sel.map((_, el) => $(el).text().trim()).get().filter(Boolean)
   }
 
+  if (ingredients.length > 50) ingredients = []
+  if (steps.length > 30) steps = []
+
   if (ingredients.length === 0 && steps.length === 0) return null
 
   return {
@@ -243,12 +264,65 @@ function parseHeuristic($) {
   }
 }
 
+function parseMarkdownRecipe(markdown, url) {
+  const lines = String(markdown || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const title = lines.find((line) => line.startsWith('# '))?.replace(/^#\s+/, '') || null
+
+  const ingredients = []
+  const steps = []
+  let section = null
+
+  for (const line of lines) {
+    if (/ingr[ée]dient/i.test(line)) {
+      section = 'ingredients'
+      continue
+    }
+    if (/pr[ée]paration|instruction|[ée]tape/i.test(line)) {
+      section = 'steps'
+      continue
+    }
+    if (line.startsWith('#')) {
+      section = null
+      continue
+    }
+
+    const isListLine = /^\s*(?:[-*]|\d+\.)\s+/.test(line)
+    if (!isListLine) continue
+
+    const cleaned = line.replace(/^\s*(?:[-*]|\d+\.)\s+/, '').trim()
+    if (!cleaned) continue
+
+    if (section === 'ingredients') ingredients.push(cleaned)
+    if (section === 'steps') steps.push(cleaned)
+  }
+
+  return {
+    title,
+    imageUrl: null,
+    prepTime: null,
+    servings: null,
+    ingredients,
+    steps,
+    sourceUrl: url,
+    partial: ingredients.length === 0 || steps.length === 0
+  }
+}
+
 // ─── Fonction principale ─────────────────────────────────────────────────────
 
 async function scrapeRecipe(rawUrl) {
   const url = await resolveUrl(rawUrl)
   console.log(`URL résolue : ${url}`)
-  const { html } = await fetchPage(url)
+  const { html, isMarkdown } = await fetchPage(url)
+
+  if (isMarkdown) {
+    return parseMarkdownRecipe(html, url)
+  }
+
   const $ = cheerio.load(html)
 
   // Cascade de parsers
