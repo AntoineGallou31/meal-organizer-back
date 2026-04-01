@@ -135,19 +135,24 @@ function findRecipeInJsonLd(obj) {
 
 function parseIso8601Duration(duration) {
   if (!duration) return null
-  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?/)
+  // Support formats like P1DT2H30M15S, PT2H, PT30M15S
+  const iso = String(duration)
+  const match = iso.match(/P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i)
   if (!match) return null
-  const hours = parseInt(match[1] || 0)
-  const minutes = parseInt(match[2] || 0)
-  return hours * 60 + minutes || null
+  const days = parseInt(match[1] || 0)
+  const hours = parseInt(match[2] || 0)
+  const minutes = parseInt(match[3] || 0)
+  const seconds = parseInt(match[4] || 0)
+  const totalMinutes = days * 1440 + hours * 60 + minutes + Math.round(seconds / 60)
+  return totalMinutes || null
 }
 
-function extractImageUrl(image) {
-  if (!image) return null
+function extractImageUrl(image, fallbackUrl = null) {
+  if (!image) return fallbackUrl
   if (typeof image === 'string') return image
-  if (Array.isArray(image)) return extractImageUrl(image[0])
-  if (typeof image === 'object') return image.url || image.contentUrl || null
-  return null
+  if (Array.isArray(image)) return extractImageUrl(image[0], fallbackUrl)
+  if (typeof image === 'object') return image.url || image.contentUrl || image.thumbnailUrl || image.src || fallbackUrl
+  return fallbackUrl
 }
 
 function extractServings(yieldVal) {
@@ -159,14 +164,29 @@ function extractServings(yieldVal) {
 
 function extractSteps(instructions) {
   if (!instructions) return []
-  if (typeof instructions === 'string') return [instructions.trim()].filter(Boolean)
+
+  function clean(text) {
+    return String(text || '')
+      .replace(/(<([^>]+)>)/gi, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .trim()
+  }
+
+  if (typeof instructions === 'string') {
+    return instructions.split(/<br\s*\/?>|\n/gi).map(clean).filter(Boolean)
+  }
+
   if (Array.isArray(instructions)) {
-    return instructions.map((step) => {
-      if (typeof step === 'string') return step.trim()
-      if (step['@type'] === 'HowToStep') return (step.text || step.name || '').trim()
-      if (step['@type'] === 'HowToSection') return extractSteps(step.itemListElement)
+    const out = instructions.map((step) => {
+      if (!step) return ''
+      if (typeof step === 'string') return clean(step)
+      if (step['@type'] === 'HowToStep') return clean(step.text || step.name || '')
+      if (step['@type'] === 'HowToSection') return extractSteps(step.itemListElement || step.instructions)
+      // Some recipes nest itemListElement directly
+      if (step.itemListElement) return extractSteps(step.itemListElement)
       return ''
-    }).flat().filter(Boolean)
+    }).flat(Infinity).filter(Boolean)
+    return out
   }
   return []
 }
@@ -185,10 +205,12 @@ function parseJsonLd($) {
 
       return {
         title: recipe.name || null,
-        imageUrl: extractImageUrl(recipe.image),
-        prepTime: totalTime || (prepTime && cookTime ? prepTime + cookTime : prepTime || cookTime),
+        imageUrl: extractImageUrl(recipe.image, recipe.thumbnailUrl),
+        prepTime: prepTime || null,
+        cookTime: cookTime || null,
+        totalTime: totalTime || (prepTime && cookTime ? prepTime + cookTime : prepTime || cookTime),
         servings: extractServings(recipe.recipeYield),
-        ingredients: (recipe.recipeIngredient || []).map((s) => s.trim()).filter(Boolean),
+        ingredients: (recipe.recipeIngredient || recipe.ingredients || []).map((s) => String(s || '').replace(/(<([^>]+)>)/gi, "").trim()).filter(Boolean),
         steps: extractSteps(recipe.recipeInstructions)
       }
     } catch (e) {
@@ -289,7 +311,14 @@ function parseHeuristic($) {
   // Cherche les ingrédients
   $('h2, h3, h4, strong, .title, [class*="title"], [class*="heading"]').each((_, el) => {
     if (ingrKeywords.test($(el).text())) {
-      const list = $(el).nextAll('ul, ol').first()
+      // Cherche d'abord le frère direct, sinon cherche descendant dans le container
+      let list = $(el).nextAll('ul, ol').first()
+      if (!list.length) {
+        list = $(el).parent().find('ul, ol').first()
+      }
+      if (!list.length) {
+        list = $(el).closest('section,article,div').find('ul, ol').first()
+      }
       if (list.length) {
         ingredients = list.find('li').map((_, li) => $(li).text().trim()).get().filter(Boolean)
         return false // break
@@ -300,7 +329,9 @@ function parseHeuristic($) {
   // Cherche les étapes
   $('h2, h3, h4, strong, .title, [class*="title"], [class*="heading"]').each((_, el) => {
     if (stepKeywords.test($(el).text())) {
-      const list = $(el).nextAll('ol, ul').first()
+      let list = $(el).nextAll('ol, ul').first()
+      if (!list.length) list = $(el).parent().find('ol, ul').first()
+      if (!list.length) list = $(el).closest('section,article,div').find('ol, ul').first()
       if (list.length) {
         steps = list.find('li').map((_, li) => $(li).text().trim()).get().filter(Boolean)
         return false
@@ -333,44 +364,39 @@ function parseHeuristic($) {
   }
 }
 
+
 function parseMarkdownRecipe(markdown, url) {
   const lines = String(markdown || '')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
 
-  const title = lines.find((line) => line.startsWith('# '))?.replace(/^#\s+/, '') || null
+  let title = lines.find((line) => line.startsWith('# '))?.replace(/^#\s+/, '') || null
 
   const ingredients = []
   const steps = []
   let section = null
 
-  for (const line of lines) {
-    // Détecte sections : # Ingrédients, **Ingrédients:**, Ingrédients:
-    if (/^#+\s*ingr[ée]dient|^\*\*ingr[ée]dient|^ingr[ée]dient/i.test(line)) {
-      section = 'ingredients'
-      continue
-    }
-    if (/^#+\s*pr[ée]paration|^\*\*pr[ée]paration|^pr[ée]paration|^#+\s*instruction|^\*\*instruction/i.test(line)) {
-      section = 'steps'
-      continue
-    }
-    if (line.startsWith('#')) {
-      section = null
-      continue
-    }
+  // More permissive, supports FR/EN headings and varied bullets
+  const regexIngredients = /^(?:#+|\*\*)\s*(ingr[ée]dients?|composants?|what you need|ingredients?)\b/i
+  const regexSteps = /^(?:#+|\*\*)\s*(pr[ée]paration|instructions?|étapes?|recette|réalisation|directions?|method|steps?)\b/i
 
-    const isListLine = /^\s*(?:[-*]|\d+\.)\s+/.test(line)
+  for (const line of lines) {
+    if (regexIngredients.test(line)) { section = 'ingredients'; continue }
+    if (regexSteps.test(line)) { section = 'steps'; continue }
+    if (/^#+/.test(line)) { section = null; continue }
+
+    const isListLine = /^\s*(?:[-*•]|\d+\.)\s+/.test(line)
     if (!isListLine) continue
 
-    const cleaned = line.replace(/^\s*(?:[-*]|\d+\.)\s+/, '').trim()
-    if (!cleaned) continue
-    
-    // Retire les liens markdown: [text](url) -> text
-    const cleanedText = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    
-    if (section === 'ingredients') ingredients.push(cleanedText)
-    if (section === 'steps') steps.push(cleanedText)
+    let cleanedText = line.replace(/^\s*(?:[-*•]|\d+\.)\s+/, '').trim()
+    cleanedText = cleanedText.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    cleanedText = cleanedText.replace(/(<([^>]+)>)/gi, '').trim()
+
+    if (cleanedText.length > 2) {
+      if (section === 'ingredients') ingredients.push(cleanedText)
+      if (section === 'steps') steps.push(cleanedText)
+    }
   }
 
   // Si aucun titre trouvé avec #, cherche le premier titre
@@ -407,34 +433,25 @@ async function scrapeRecipe(rawUrl) {
 
   // Détecte Overblog
   const isOverblog = html.includes('over-blog') || html.includes('overblog') || url.includes('.over-blog.')
-  // Cascade de parsers : Overblog en premier si détecté
+  // Cascade de parsers : try each parser in order and stop on a result with ingredients+steps
+  const parsers = isOverblog
+    ? [{ name: 'Overblog', fn: parseOverblog }, { name: 'JSON-LD', fn: parseJsonLd }, { name: 'Microdata', fn: parseMicrodata }, { name: 'Heuristic', fn: parseHeuristic }]
+    : [{ name: 'JSON-LD', fn: parseJsonLd }, { name: 'Microdata', fn: parseMicrodata }, { name: 'Heuristic', fn: parseHeuristic }]
+
   let result = null
   let parserUsed = null
-  if (isOverblog) {
-    result = parseOverblog($)
-    parserUsed = result ? 'parseOverblog' : null
-    if (!result) {
-      result = parseJsonLd($)
-      parserUsed = result ? 'parseJsonLd' : parserUsed
-    }
-    if (!result) {
-      result = parseMicrodata($)
-      parserUsed = result ? 'parseMicrodata' : parserUsed
-    }
-    if (!result) {
-      result = parseHeuristic($)
-      parserUsed = result ? 'parseHeuristic' : parserUsed
-    }
-  } else {
-    result = parseJsonLd($)
-    parserUsed = result ? 'parseJsonLd' : null
-    if (!result) {
-      result = parseMicrodata($)
-      parserUsed = result ? 'parseMicrodata' : null
-    }
-    if (!result) {
-      result = parseHeuristic($)
-      parserUsed = result ? 'parseHeuristic' : null
+  for (const p of parsers) {
+    try {
+      const res = p.fn($)
+      if (res && Array.isArray(res.ingredients) && Array.isArray(res.steps) && (res.ingredients.length > 0 && res.steps.length > 0)) {
+        result = res
+        parserUsed = p.name
+        break
+      }
+      // keep a partial result as fallback
+      if (!result && res) { result = res; parserUsed = p.name }
+    } catch (e) {
+      continue
     }
   }
 
