@@ -46,7 +46,7 @@ const isMissingColumnError = (error) => {
 };
 
 // GET /api/meal-plan?week=YYYY-Www
-router.get('/', async (req, res) => {
+router.get('/meal-plan', async (req, res) => {
     try {
         let week = req.query.week;
         if (!week) {
@@ -87,7 +87,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/meal-plan
-router.post('/', async (req, res) => {
+router.post('/meal-plan', async (req, res) => {
     try {
         const { date, slot, recipeId, manualText } = req.body;
         const hasRecipeId = recipeId !== undefined && recipeId !== null && String(recipeId).trim() !== '';
@@ -157,7 +157,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /api/meal-plan/:date/:slot
-router.delete('/:date/:slot', async (req, res) => {
+router.delete('/meal-plan/:date/:slot', async (req, res) => {
     try {
         const { date, slot } = req.params;
         const { data, error } = await supabase

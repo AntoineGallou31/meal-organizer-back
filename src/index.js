@@ -1,10 +1,11 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const recipesRouter = require('./routes/recipes');
-const mealPlanRouter = require('./routes/mealPlan');
+const validateUUID = require('./middlewares/validateUUID');
 
 const app = express();
+
+app.locals.validateUUID = validateUUID;
 
 app.use(cors({
   origin: [
@@ -14,8 +15,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
-app.use('/api/recipes', recipesRouter);
-app.use('/api/meal-plan', mealPlanRouter);
+app.use('/api', require('./routes/categories'));
+app.use('/api', require('./routes/recipes'));
+app.use('/api', require('./routes/mealPlan'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
