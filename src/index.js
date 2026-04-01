@@ -13,7 +13,7 @@ app.use(cors({
     'https://meal-organizer-front.vercel.app'
   ]
 }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 app.use('/api', require('./routes/categories'));
 app.use('/api', require('./routes/recipes'));
