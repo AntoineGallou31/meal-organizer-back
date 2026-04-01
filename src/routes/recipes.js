@@ -27,6 +27,7 @@ function normalizeCategoryIds(categoryIds) {
 function mapRecipeWithCategories(recipe) {
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
   const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const seasons = Array.isArray(recipe.seasons) ? recipe.seasons : [];
 
   return {
     id: recipe.id,
@@ -38,6 +39,7 @@ function mapRecipeWithCategories(recipe) {
     created_at: recipe.created_at,
     ingredients,
     steps,
+    seasons,
     external_only: Boolean(recipe.source_url) && ingredients.length === 0 && steps.length === 0,
     categories: (recipe.recipe_categories || [])
       .map((rc) => rc.categories)
@@ -56,6 +58,7 @@ async function fetchRecipeWithCategoriesById(recipeId) {
       servings,
       ingredients,
       steps,
+      seasons,
       source_url,
       created_at,
       recipe_categories (
@@ -193,6 +196,9 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
   const steps = Array.isArray(body.steps)
     ? body.steps.map((item) => String(item).trim()).filter(Boolean)
     : undefined;
+  const seasons = Array.isArray(body.seasons)
+    ? [...new Set(body.seasons.map((s) => String(s).trim().toLowerCase()).filter(Boolean))]
+    : undefined;
 
   const payload = {
     title,
@@ -202,6 +208,7 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
     ingredients,
     steps,
     source_url: body.sourceUrl ?? body.source_url ?? undefined,
+    seasons,
   };
 
   if (partial) {
@@ -279,6 +286,7 @@ router.get('/recipes', async (req, res) => {
       servings,
       ingredients,
       steps,
+      seasons,
       source_url,
       created_at,
       recipe_categories${categoryId ? '!inner' : ''} (
@@ -335,6 +343,9 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
           image_url,
           prep_time,
           servings,
+          ingredients,
+          steps,
+          seasons,
           source_url,
           created_at,
           recipe_categories!inner (
