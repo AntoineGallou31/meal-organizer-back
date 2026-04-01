@@ -20,6 +20,7 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
     ingredients,
     steps,
     source_url: body.sourceUrl ?? body.source_url ?? undefined,
+    type: body.type ?? undefined,
   };
 
   if (partial) {
@@ -60,7 +61,7 @@ function validateRecipePayload(payload, { partial = false } = {}) {
 // GET /api/recipes
 router.get('/', async (req, res) => {
   try {
-    let query = supabase.from('recipes').select('id, title, image_url, prep_time, servings, source_url, created_at');
+    let query = supabase.from('recipes').select('id, title, image_url, prep_time, servings, source_url, type, created_at');
     if (req.query.search) {
       query = query.ilike('title', `%${req.query.search}%`);
     }
@@ -116,6 +117,15 @@ router.post('/import', async (req, res) => {
 
     try {
         const recipeData = await scrapeRecipe(url);
+        
+        // Count missing fields (at least 2 missing = incomplete)
+        const missingFields = [];
+        if (!recipeData.title || recipeData.title.trim() === '') missingFields.push('title');
+        if (!Array.isArray(recipeData.ingredients) || recipeData.ingredients.length === 0) missingFields.push('ingredients');
+        if (!Array.isArray(recipeData.steps) || recipeData.steps.length === 0) missingFields.push('steps');
+        
+        const isIncomplete = missingFields.length >= 2;
+        
         const { data, error } = await supabase.from('recipes').insert([{
             title: recipeData.title,
             image_url: recipeData.imageUrl,
@@ -124,13 +134,13 @@ router.post('/import', async (req, res) => {
             ingredients: recipeData.ingredients,
             steps: recipeData.steps,
             source_url: recipeData.sourceUrl,
+            type: recipeData.type || null,
         }]).select().single();
 
         if (error) throw error;
 
-        if (recipeData.partial) {
-            res.set('X-Partial', 'true');
-            return res.status(201).json({ ...data, partial: true });
+        if (isIncomplete) {
+            return res.status(201).json({ ...data, incomplete: true, missingFields });
         }
 
         res.status(201).json(data);
