@@ -68,6 +68,14 @@ async function fetchPage(url) {
         'Referer': 'https://www.google.fr/'
       }
     })
+    // Pour Overblog et sites similaires, le contenu JS est souvent vide/paywall. 
+    // Détecte par hosting ou par absence de contenu.
+    const hasOverblogSignature = res.data.includes('over-blog') || res.data.includes('overblog')
+    const hasRecipeContent = res.data.includes('Ingrédients') || res.data.includes('Préparation') || res.data.includes('ingredients')
+    if (hasOverblogSignature && !hasRecipeContent) {
+      console.log('Overblog détecté sans contenu rendu, fallback Jina...')
+      throw new Error('Overblog sans contenu')
+    }
     return { html: res.data, method: 'direct' }
   } catch (err) {
     const status = err.response?.status
@@ -208,6 +216,62 @@ function parseMicrodata($) {
   }
 }
 
+// ─── Parser Overblog spécifique ──────────────────────────────────────────────
+
+function parseOverblog($) {
+  let ingredients = []
+  let steps = []
+  let title = null
+
+  // Overblog structure: titre avec "Ingrédients:" ou "Ingredients:"
+  // suivi de bullets • ou listes, puis "Préparation:" suivi de liste numérotée
+
+  // Cherche le titre principal
+  title = $('h1, h2').first().text().trim() || null
+
+  // Cherche ingrédients avec le pattern Overblog
+  const allText = $.html()
+  const ingredMatch = allText.match(/Ingr[ée]dient[s]?:?\s*\(([^)]+)\)([\s\S]*?)(?:Pr[ée]paration|Instruction|P r[ée]paration)/i)
+  if (ingredMatch && ingredMatch[2]) {
+    const ingredText = ingredMatch[2]
+    // Extrait les lignes qui commencent par • ou qui sont en listes
+    const lines = ingredText
+      .split(/[•\n]/g)
+      .map(line => line.replace(/<[^>]+>/g, ' ').trim().replace(/\s+/g, ' '))
+      .filter(line => line.length > 3 && !line.match(/^\d+\s*\./))
+    ingredients = lines.slice(0, 30) // Limite à 30 ingrédients
+  }
+
+  // Cherche étapes avec le pattern Overblog
+  const stepMatch = allText.match(/Pr[ée]paration:?([\s\S]*?)(?:<\/article|<footer|COMMENTER|Photographies)/i)
+  if (stepMatch && stepMatch[1]) {
+    const stepText = stepMatch[1]
+    // Cherche les listes numérotées
+    const stepLines = stepText.split(/\n/g)
+    for (const line of stepLines) {
+      const clean = line.replace(/<[^>]+>/g, ' ').trim().replace(/\s+/g, ' ')
+      // Pattern: "1. texte" ou "1 texte"
+      if (/^\d+\.?\s+.{20,}/.test(clean)) {
+        const stepText = clean.replace(/^\d+\.?\s+/, '').trim()
+        if (stepText.length > 10) {
+          steps.push(stepText)
+        }
+      }
+    }
+  }
+
+  if (ingredients.length === 0 && steps.length === 0) return null
+
+  return {
+    title,
+    imageUrl: $('meta[property="og:image"]').attr('content') || null,
+    prepTime: null,
+    servings: null,
+    ingredients,
+    steps
+  }
+}
+
 // ─── Parsing heuristique CSS ─────────────────────────────────────────────────
 
 function parseHeuristic($) {
@@ -277,11 +341,12 @@ function parseMarkdownRecipe(markdown, url) {
   let section = null
 
   for (const line of lines) {
-    if (/ingr[ée]dient/i.test(line)) {
+    // Détecte sections : # Ingrédients, **Ingrédients:**, Ingrédients:
+    if (/^#+\s*ingr[ée]dient|^\*\*ingr[ée]dient|^ingr[ée]dient/i.test(line)) {
       section = 'ingredients'
       continue
     }
-    if (/pr[ée]paration|instruction|[ée]tape/i.test(line)) {
+    if (/^#+\s*pr[ée]paration|^\*\*pr[ée]paration|^pr[ée]paration|^#+\s*instruction|^\*\*instruction/i.test(line)) {
       section = 'steps'
       continue
     }
@@ -295,13 +360,23 @@ function parseMarkdownRecipe(markdown, url) {
 
     const cleaned = line.replace(/^\s*(?:[-*]|\d+\.)\s+/, '').trim()
     if (!cleaned) continue
+    
+    // Retire les liens markdown: [text](url) -> text
+    const cleanedText = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    
+    if (section === 'ingredients') ingredients.push(cleanedText)
+    if (section === 'steps') steps.push(cleanedText)
+  }
 
-    if (section === 'ingredients') ingredients.push(cleaned)
-    if (section === 'steps') steps.push(cleaned)
+  // Si aucun titre trouvé avec #, cherche le premier titre
+  let finalTitle = title
+  if (!finalTitle) {
+    const boldTitle = lines.find((line) => /^\*\*[^*]+\*\*/.test(line))
+    if (boldTitle) finalTitle = boldTitle.replace(/\*\*/g, '')
   }
 
   return {
-    title,
+    title: finalTitle || null,
     imageUrl: null,
     prepTime: null,
     servings: null,
@@ -325,10 +400,13 @@ async function scrapeRecipe(rawUrl) {
 
   const $ = cheerio.load(html)
 
-  // Cascade de parsers
-  const result = parseJsonLd($)
-    ?? parseMicrodata($)
-    ?? parseHeuristic($)
+  // Détecte Overblog
+  const isOverblog = html.includes('over-blog') || html.includes('overblog') || url.includes('.over-blog.')
+
+  // Cascade de parsers : Overblog en premier si détecté
+  const result = isOverblog
+    ? (parseOverblog($) ?? parseJsonLd($) ?? parseMicrodata($) ?? parseHeuristic($))
+    : (parseJsonLd($) ?? parseMicrodata($) ?? parseHeuristic($))
 
   if (!result) {
     return {
