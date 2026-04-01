@@ -7,6 +7,7 @@ const {
   replaceCategoriesForRecipe,
 } = require('../services/categorizer');
 const validateUUID = require('../middlewares/validateUUID');
+const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -242,14 +243,15 @@ router.get('/recipes', async (req, res) => {
     const prepMax = Number.parseInt(req.query.prepMax, 10);
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'newest';
 
+    // Validation
     if (categoryId && !UUID_REGEX.test(categoryId)) {
-      return res.status(400).json({ error: 'categoryId invalide' });
+      throw new APIError('L\'ID de catégorie fourni n\'est pas au format UUID valide', 400, 'INVALID_UUID');
     }
     if (season && !Object.keys(SEASON_INGREDIENTS).includes(season)) {
-      return res.status(400).json({ error: 'season invalide' });
+      throw new APIError(`La saison "${season}" n\'existe pas. Saisons disponibles: ${Object.keys(SEASON_INGREDIENTS).join(', ')}`, 400, 'INVALID_SEASON');
     }
     if (req.query.prepMax !== undefined && Number.isNaN(prepMax)) {
-      return res.status(400).json({ error: 'prepMax doit etre un entier' });
+      throw new APIError('Le paramètre prepMax doit être un nombre entier', 400, 'INVALID_PREP_MAX');
     }
 
     const ingredientTerms = [];
@@ -289,11 +291,17 @@ router.get('/recipes', async (req, res) => {
     }
 
     const { data, error } = await query;
-    if (error) throw error;
+    if (error) {
+      throw new APIError(
+        'Impossible de récupérer les recettes',
+        500,
+        'FETCH_RECIPES_ERROR',
+        { supabaseError: error.message }
+      );
+    }
     res.json((data || []).map(mapRecipeWithCategories));
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur base de données' });
+    handleError(error, res, { endpoint: 'GET /api/recipes' });
   }
 });
 
@@ -301,7 +309,13 @@ router.get('/recipes', async (req, res) => {
 router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
   try {
     const data = await fetchRecipeWithCategoriesById(req.params.id);
-    if (!data) return res.status(404).json({ error: 'Recette non trouvée' });
+    if (!data) {
+      throw new APIError(
+        `Aucune recette trouvée avec l\'ID: ${req.params.id}`,
+        404,
+        'RECIPE_NOT_FOUND'
+      );
+    }
 
     const recipeCategoryIds = (data.recipe_categories || []).map((rc) => rc.category_id).filter(Boolean);
     let similarRecipes = [];
@@ -315,7 +329,14 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(20);
 
-      if (similarError) throw similarError;
+      if (similarError) {
+        throw new APIError(
+          'Impossible de récupérer les recettes similaires',
+          500,
+          'FETCH_SIMILAR_RECIPES_ERROR',
+          { supabaseError: similarError.message }
+        );
+      }
 
       const unique = new Map();
       (similar || []).forEach((recipe) => {
@@ -327,13 +348,12 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
     }
 
     res.json({
-      ...data,
+      ...mapRecipeWithCategories(data),
       categories: (data.recipe_categories || []).map((rc) => rc.categories).filter(Boolean),
       similar_recipes: similarRecipes,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur base de données' });
+    handleError(error, res, { endpoint: 'GET /api/recipes/:id', recipeId: req.params.id });
   }
 });
 
@@ -383,8 +403,7 @@ router.post('/recipes', async (req, res) => {
       confident,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur base de données' });
+    handleError(error, res, { endpoint: 'POST /api/recipes' });
   }
 });
 
@@ -501,8 +520,7 @@ router.post('/recipes/import-pinterest-export', async (req, res) => {
 
     return res.status(202).json(job);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur lors du lancement de l import' });
+    handleError(error, res, { endpoint: 'POST /api/recipes/import-pinterest-export' });
   }
 });
 
@@ -534,8 +552,7 @@ router.get('/recipes/import-status/:jobId', validateUUID('jobId'), async (req, r
       results: data.results || {},
     });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'GET /api/recipes/import-status/:jobId', jobId: req.params.jobId });
   }
 });
 
@@ -557,11 +574,12 @@ router.put('/recipes/:id', validateUUID('id'), async (req, res) => {
       .select()
       .single();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Recette non trouvée' });
+    if (!data) {
+      throw new APIError('Recette non trouvée avec cet ID', 404, 'RECIPE_NOT_FOUND');
+    }
     res.json(data);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur base de données' });
+    handleError(error, res, { endpoint: 'PUT /api/recipes/:id', recipeId: req.params.id });
   }
 });
 
@@ -578,11 +596,12 @@ router.delete('/recipes/:id', validateUUID('id'), async (req, res) => {
       .select('id')
       .maybeSingle();
     if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Recette non trouvée' });
+    if (!data) {
+      throw new APIError('Recette non trouvée avec cet ID', 404, 'RECIPE_NOT_FOUND');
+    }
     res.status(204).send();
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erreur base de données' });
+    handleError(error, res, { endpoint: 'DELETE /api/recipes/:id', recipeId: req.params.id });
   }
 });
 

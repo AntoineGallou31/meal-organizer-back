@@ -2,6 +2,7 @@ const { Router } = require('express');
 const supabase = require('../services/supabase');
 const { replaceCategoriesForRecipe } = require('../services/categorizer');
 const validateUUID = require('../middlewares/validateUUID');
+const { APIError, handleError } = require('../services/errorHandler');
 
 const router = Router();
 
@@ -65,8 +66,7 @@ router.get('/categories', async (req, res) => {
       }))
     );
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'GET /api/categories' });
   }
 });
 
@@ -114,8 +114,7 @@ router.post('/categories', async (req, res) => {
     if (error) throw error;
     return res.status(201).json(data);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'POST /api/categories' });
   }
 });
 
@@ -189,8 +188,7 @@ router.put('/categories/:id', validateUUID('id'), async (req, res) => {
 
     return res.json(data);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'PUT /api/categories/:id', categoryId: req.params.id });
   }
 });
 
@@ -221,8 +219,7 @@ router.delete('/categories/:id', validateUUID('id'), async (req, res) => {
     if (error) throw error;
     return res.status(204).send();
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'DELETE /api/categories/:id', categoryId: req.params.id });
   }
 });
 
@@ -261,8 +258,7 @@ router.post('/recipes/:id/categories', validateUUID('id'), async (req, res) => {
     if (assignedError) throw assignedError;
     return res.json(assigned || []);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'POST /api/recipes/:id/categories', recipeId: req.params.id });
   }
 });
 
@@ -297,8 +293,7 @@ router.get('/categories/:id/recipes', validateUUID('id'), async (req, res) => {
 
     return res.json((data || []).map(mapRecipeWithCategories));
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Erreur base de donnees' });
+    handleError(error, res, { endpoint: 'GET /api/categories/:id/recipes', categoryId: req.params.id });
   }
 });
 

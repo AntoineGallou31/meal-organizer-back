@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const supabase = require('../services/supabase');
+const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
 const MANUAL_TEXT_COLUMNS = ['manual_text', 'manual_note', 'custom_text', 'text'];
@@ -81,8 +82,7 @@ router.get('/meal-plan', async (req, res) => {
 
         res.json(weekSchedule);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erreur base de données' });
+        handleError(error, res, { endpoint: 'GET /api/meal-plan', week: req.query.week });
     }
 });
 
@@ -151,8 +151,7 @@ router.post('/meal-plan', async (req, res) => {
             error: 'Aucune colonne texte compatible trouvée dans meal_plan (manual_text/manual_note/custom_text/text)',
         });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erreur base de données' });
+        handleError(error, res, { endpoint: 'POST /api/meal-plan', date: req.body?.date, slot: req.body?.slot });
     }
 });
 
@@ -173,8 +172,7 @@ router.delete('/meal-plan/:date/:slot', async (req, res) => {
 
         res.status(204).send();
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Erreur base de données' });
+        handleError(error, res, { endpoint: 'DELETE /api/meal-plan/:date/:slot', date: req.params.date, slot: req.params.slot });
     }
 });
 
