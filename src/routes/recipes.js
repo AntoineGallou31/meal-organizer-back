@@ -421,23 +421,41 @@ router.post('/recipes/import', async (req, res) => {
 
     try {
         const recipeData = await scrapeRecipe(url);
-        
-        // Count missing fields (at least 2 missing = incomplete)
+
+        const hasIngredients = Array.isArray(recipeData.ingredients) && recipeData.ingredients.length > 0;
+        const hasSteps = Array.isArray(recipeData.steps) && recipeData.steps.length > 0;
+        const isExternalOnly = !hasIngredients && !hasSteps;
+
+        // Count missing fields (at least 2 missing = incomplete), except external-only recipes.
         const missingFields = [];
         if (!recipeData.title || recipeData.title.trim() === '') missingFields.push('title');
-        if (!Array.isArray(recipeData.ingredients) || recipeData.ingredients.length === 0) missingFields.push('ingredients');
-        if (!Array.isArray(recipeData.steps) || recipeData.steps.length === 0) missingFields.push('steps');
-        
-        const isIncomplete = missingFields.length >= 2;
-        
+        if (!hasIngredients) missingFields.push('ingredients');
+        if (!hasSteps) missingFields.push('steps');
+
+        const isIncomplete = !isExternalOnly && missingFields.length >= 2;
+
+        const insertPayload = isExternalOnly
+          ? {
+              title: (recipeData.title && recipeData.title.trim()) || 'Recette importee',
+              image_url: recipeData.imageUrl || null,
+              prep_time: null,
+              servings: null,
+              ingredients: [],
+              steps: [],
+              source_url: recipeData.sourceUrl || url,
+            }
+          : {
+              title: recipeData.title,
+              image_url: recipeData.imageUrl,
+              prep_time: recipeData.prepTime,
+              servings: recipeData.servings,
+              ingredients: recipeData.ingredients,
+              steps: recipeData.steps,
+              source_url: recipeData.sourceUrl,
+            };
+
         const { data, error } = await supabase.from('recipes').insert([{
-            title: recipeData.title,
-            image_url: recipeData.imageUrl,
-            prep_time: recipeData.prepTime,
-            servings: recipeData.servings,
-            ingredients: recipeData.ingredients,
-            steps: recipeData.steps,
-            source_url: recipeData.sourceUrl,
+            ...insertPayload,
         }]).select().single();
 
         if (error) throw error;
@@ -463,6 +481,7 @@ router.post('/recipes/import', async (req, res) => {
           autoDetected: true,
           confident: detection.confident,
           needsCategoryConfirmation: !detection.confident,
+          externalOnly: isExternalOnly,
         });
     } catch (err) {
         if (err.partial) {
