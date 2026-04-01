@@ -492,12 +492,15 @@ router.post('/recipes/import-pinterest-export', async (req, res) => {
   try {
     const urls = extractUrlsFromBody(req.body || {});
     if (!urls.length) {
-      return res.status(400).json({ error: 'Aucune URL detectee dans le payload' });
+      throw new APIError('Aucune URL détectée dans le fichier', 400, 'NO_URLS_FOUND');
     }
+
+    const jobId = require('crypto').randomUUID();
 
     const { data: job, error } = await supabase
       .from('job_status')
       .insert([{
+        id: jobId,
         status: 'running',
         total: urls.length,
         processed: 0,
@@ -512,10 +515,17 @@ router.post('/recipes/import-pinterest-export', async (req, res) => {
       .select('id, status, total, processed, results')
       .single();
 
-    if (error) throw error;
+    if (error) {
+      throw new APIError(
+        'Impossible de créer le job d\'import',
+        500,
+        'CREATE_JOB_ERROR',
+        { supabaseError: error.message }
+      );
+    }
 
     processImport(job.id, urls).catch((importError) => {
-      console.error(importError);
+      console.error('Import error:', importError);
     });
 
     return res.status(202).json(job);
