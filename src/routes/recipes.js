@@ -98,6 +98,25 @@ async function processImport(jobId, urls = []) {
   try {
     for (let i = 0; i < urls.length; i += 1) {
       const url = urls[i];
+      // Check job status to support cancellation
+      try {
+        const { data: jobRow } = await supabase.from('job_status').select('status').eq('id', jobId).maybeSingle();
+        if (jobRow && jobRow.status === 'cancelled') {
+          console.log(`[Import Job ${jobId}] Cancelled by user. Stopping processing.`);
+          await supabase
+            .from('job_status')
+            .update({
+              status: 'cancelled',
+              processed: results.success + results.failed,
+              results,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', jobId);
+          break;
+        }
+      } catch (err) {
+        console.error(`[Import Job ${jobId}] Erreur lors de la vérification du status:`, err.message || err);
+      }
       try {
         console.log(`[Import Job ${jobId}] Processing URL ${i + 1}/${urls.length}: ${url}`);
         const recipe = await scrapeRecipe(url);
@@ -192,6 +211,38 @@ async function processImport(jobId, urls = []) {
       .eq('id', jobId);
   }
 }
+
+// POST /api/recipes/import-cancel
+router.post('/recipes/import-cancel', async (req, res) => {
+  try {
+    const jobId = (req.body && req.body.jobId) || null;
+    if (!jobId || !UUID_REGEX.test(jobId)) {
+      return res.status(400).json({ error: 'jobId manquant ou invalide', field: 'jobId' });
+    }
+
+    const { data: existing, error: fetchError } = await supabase
+      .from('job_status')
+      .select('id,status,processed,total,results')
+      .eq('id', jobId)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!existing) return res.status(404).json({ error: 'Job non trouve' });
+
+    if (existing.status === 'completed' || existing.status === 'failed' || existing.status === 'cancelled') {
+      return res.status(200).json({ id: jobId, status: existing.status });
+    }
+
+    const { error: updateError } = await supabase
+      .from('job_status')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', jobId);
+    if (updateError) throw updateError;
+
+    return res.json({ id: jobId, status: 'cancelled' });
+  } catch (error) {
+    handleError(error, res, { endpoint: 'POST /api/recipes/import-cancel' });
+  }
+});
 
 function extractUrlsFromBody(body = {}) {
   if (Array.isArray(body.urls)) {

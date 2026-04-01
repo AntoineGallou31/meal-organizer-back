@@ -47,6 +47,7 @@ async function resolveUrl(url) {
 // ─── Fetch avec fallbacks ────────────────────────────────────────────────────
 
 async function fetchPage(url) {
+  console.log(`[scraper] fetchPage start for: ${url}`)
   // Tentative 1 : fetch direct avec headers Chrome
   try {
     const res = await axios.get(url, {
@@ -68,28 +69,31 @@ async function fetchPage(url) {
         'Referer': 'https://www.google.fr/'
       }
     })
-    // Pour Overblog et sites similaires, le contenu JS est souvent vide/paywall. 
-    // Détecte par hosting ou par absence de contenu.
-    const hasOverblogSignature = res.data.includes('over-blog') || res.data.includes('overblog')
-    const hasRecipeContent = res.data.includes('Ingrédients') || res.data.includes('Préparation') || res.data.includes('ingredients')
-    if (hasOverblogSignature && !hasRecipeContent) {
-      console.log('Overblog détecté sans contenu rendu, fallback Jina...')
-      throw new Error('Overblog sans contenu')
+    // Si la page ne contient pas d'indicateurs de recette, elle peut être rendue côté client
+    // (Shopify / themes / JS). Dans ce cas, ne pas retourner le HTML direct et forcer
+    // les fallbacks (ScraperAPI / Jina) pour récupérer le contenu rendu.
+    const hasRecipeContent = res.data && (res.data.includes('Ingrédients') || res.data.includes('Préparation') || res.data.includes('ingredients') || res.data.includes('Préparation:'))
+    if (!hasRecipeContent) {
+      console.log('[scraper] Aucun contenu de recette détecté dans le HTML brut — fallback vers rendu JS (ScraperAPI/Jina)')
+      throw new Error('No recipe content')
     }
     return { html: res.data, method: 'direct' }
   } catch (err) {
     const status = err.response?.status
-    console.log(`Fetch direct échoué (${status ?? 'réseau'}), fallback ScraperAPI...`)
+    console.log(`[scraper] Fetch direct échoué (${status ?? 'réseau'}), tenter ScraperAPI si clé présente...`)
   }
 
   // Tentative 2 : ScraperAPI
   if (SCRAPER_API_KEY) {
     try {
       const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=fr&render=true`
+      console.log(`[scraper] ScraperAPI key present — calling ScraperAPI: ${scraperUrl}`)
       const res = await axios.get(scraperUrl, { timeout: 30000 })
+      console.log(`[scraper] ScraperAPI response status: ${res.status} bodyLength=${String(res.data || '').length}`)
       return { html: res.data, method: 'scraperapi' }
     } catch (err) {
-      console.log('ScraperAPI échoué, fallback Jina...')
+      console.log('[scraper] ScraperAPI échoué:', err.message || err)
+      console.log('[scraper] Fallback vers Jina.ai reader...')
     }
   }
 
@@ -100,6 +104,7 @@ async function fetchPage(url) {
       timeout: 20000,
       headers: { 'Accept': 'text/markdown,text/plain;q=0.9,*/*;q=0.8' }
     })
+    console.log(`[scraper] Jina.ai reader used — fetched markdown length=${String(res.data || '').length}`)
     return { html: res.data, method: 'jina', isMarkdown: true }
   } catch (err) {
     throw new Error(`Impossible d'accéder à la page après 3 tentatives : ${url}`)
@@ -392,7 +397,7 @@ function parseMarkdownRecipe(markdown, url) {
 async function scrapeRecipe(rawUrl) {
   const url = await resolveUrl(rawUrl)
   console.log(`URL résolue : ${url}`)
-  const { html, isMarkdown } = await fetchPage(url)
+    const { html, isMarkdown, method } = await fetchPage(url)
 
   if (isMarkdown) {
     return parseMarkdownRecipe(html, url)
@@ -402,16 +407,46 @@ async function scrapeRecipe(rawUrl) {
 
   // Détecte Overblog
   const isOverblog = html.includes('over-blog') || html.includes('overblog') || url.includes('.over-blog.')
-
   // Cascade de parsers : Overblog en premier si détecté
-  const result = isOverblog
-    ? (parseOverblog($) ?? parseJsonLd($) ?? parseMicrodata($) ?? parseHeuristic($))
-    : (parseJsonLd($) ?? parseMicrodata($) ?? parseHeuristic($))
+  let result = null
+  let parserUsed = null
+  if (isOverblog) {
+    result = parseOverblog($)
+    parserUsed = result ? 'parseOverblog' : null
+    if (!result) {
+      result = parseJsonLd($)
+      parserUsed = result ? 'parseJsonLd' : parserUsed
+    }
+    if (!result) {
+      result = parseMicrodata($)
+      parserUsed = result ? 'parseMicrodata' : parserUsed
+    }
+    if (!result) {
+      result = parseHeuristic($)
+      parserUsed = result ? 'parseHeuristic' : parserUsed
+    }
+  } else {
+    result = parseJsonLd($)
+    parserUsed = result ? 'parseJsonLd' : null
+    if (!result) {
+      result = parseMicrodata($)
+      parserUsed = result ? 'parseMicrodata' : null
+    }
+    if (!result) {
+      result = parseHeuristic($)
+      parserUsed = result ? 'parseHeuristic' : null
+    }
+  }
 
   if (!result) {
+    const fallbackTitle = $('h1').first().text().trim() || null
+    const fallbackImage = $('meta[property="og:image"]').attr('content') || null
+    const htmlSnippet = String(html || '').slice(0, 800).replace(/\s+/g, ' ')
+    const hasKeywords = Boolean((html || '').match(/Ingrédients|Préparation|ingredients|Préparation:/i))
+    console.log(`[scraper] No parser matched. method=${method} title=${String(fallbackTitle)} hasKeywords=${hasKeywords} htmlSnippet=${htmlSnippet}`)
     return {
-      title: $('h1').first().text().trim() || null,
-      imageUrl: $('meta[property="og:image"]').attr('content') || null,
+      title: fallbackTitle,
+      imageUrl: fallbackImage,
       prepTime: null,
       servings: null,
       ingredients: [],
@@ -421,7 +456,22 @@ async function scrapeRecipe(rawUrl) {
     }
   }
 
-  const partial = result.ingredients.length === 0 || result.steps.length === 0
+  const partial = (result.ingredients || []).length === 0 || (result.steps || []).length === 0
+
+  // Log details when recipe is partial so we can debug what was retrieved
+  if (partial) {
+    const titleFound = result.title || $('h1').first().text().trim() || null
+    const imgFound = result.imageUrl || $('meta[property="og:image"]').attr('content') || null
+    const htmlSnippet = String(html || '').slice(0, 800).replace(/\s+/g, ' ')
+    const hasKeywords = Boolean((html || '').match(/Ingrédients|Préparation|ingredients|Préparation:/i))
+    console.log(`[scraper] Partial recipe extracted. method=${method} parser=${parserUsed} title=${String(titleFound)} ingredients=${(result.ingredients||[]).length} steps=${(result.steps||[]).length} img=${Boolean(imgFound)} hasKeywords=${hasKeywords} htmlSnippet=${htmlSnippet}`)
+    if (isMarkdown) {
+      const mdSnippet = String(html || '').slice(0, 800).replace(/\s+/g, ' ')
+      console.log(`[scraper] Markdown snippet: ${mdSnippet}`)
+    }
+  } else {
+    console.log(`[scraper] Full recipe extracted. method=${method} parser=${parserUsed} title=${result.title} ingredients=${result.ingredients.length} steps=${result.steps.length}`)
+  }
 
   return {
     ...result,
