@@ -84,11 +84,15 @@ async function processImport(jobId, urls = []) {
     needsReview: [],
   };
 
+  console.log(`[Import Job ${jobId}] Starting with ${urls.length} URLs`);
+
   try {
     for (let i = 0; i < urls.length; i += 1) {
       const url = urls[i];
       try {
+        console.log(`[Import Job ${jobId}] Processing URL ${i + 1}/${urls.length}: ${url}`);
         const recipe = await scrapeRecipe(url);
+        
         const payload = {
           title: recipe.title,
           image_url: recipe.imageUrl,
@@ -120,9 +124,12 @@ async function processImport(jobId, urls = []) {
 
         results.success += 1;
         results.created.push(inserted);
+        console.log(`[Import Job ${jobId}] ✓ Success: ${recipe.title}`);
       } catch (error) {
         results.failed += 1;
-        results.errors.push({ url, message: error.message || 'Import impossible' });
+        const errorMsg = error.message || 'Import impossible';
+        results.errors.push({ url, message: errorMsg });
+        console.error(`[Import Job ${jobId}] ✗ Failed: ${url} - ${errorMsg}`);
       }
 
       if ((i + 1) % 10 === 0) {
@@ -134,6 +141,7 @@ async function processImport(jobId, urls = []) {
             updated_at: new Date().toISOString(),
           })
           .eq('id', jobId);
+        console.log(`[Import Job ${jobId}] Progress: ${results.success + results.failed}/${urls.length}`);
       }
     }
 
@@ -146,7 +154,10 @@ async function processImport(jobId, urls = []) {
         updated_at: new Date().toISOString(),
       })
       .eq('id', jobId);
+    
+    console.log(`[Import Job ${jobId}] Completed - Success: ${results.success}, Failed: ${results.failed}`);
   } catch (error) {
+    console.error(`[Import Job ${jobId}] Fatal error:`, error);
     await supabase
       .from('job_status')
       .update({
