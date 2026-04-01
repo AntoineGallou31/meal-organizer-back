@@ -25,6 +25,9 @@ function normalizeCategoryIds(categoryIds) {
 }
 
 function mapRecipeWithCategories(recipe) {
+  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+
   return {
     id: recipe.id,
     title: recipe.title,
@@ -33,6 +36,9 @@ function mapRecipeWithCategories(recipe) {
     servings: recipe.servings,
     source_url: recipe.source_url,
     created_at: recipe.created_at,
+    ingredients,
+    steps,
+    external_only: Boolean(recipe.source_url) && ingredients.length === 0 && steps.length === 0,
     categories: (recipe.recipe_categories || [])
       .map((rc) => rc.categories)
       .filter(Boolean),
@@ -271,6 +277,8 @@ router.get('/recipes', async (req, res) => {
       image_url,
       prep_time,
       servings,
+      ingredients,
+      steps,
       source_url,
       created_at,
       recipe_categories${categoryId ? '!inner' : ''} (
