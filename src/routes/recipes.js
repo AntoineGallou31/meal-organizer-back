@@ -5,6 +5,7 @@ const {
   detectCategory,
   assignCategoryToRecipe,
   replaceCategoriesForRecipe,
+  getOrCreateCategory,
 } = require('../services/categorizer');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
@@ -26,6 +27,166 @@ const SEASON_INGREDIENTS = {
   autumn: ['potiron', 'potimarron', 'courge', 'champignon', 'chataigne', 'pomme', 'poire', 'raisin', 'chou', 'betterave'],
   winter: ['poireau', 'panais', 'navet', 'endive', 'chou-fleur', 'brocoli', 'orange', 'clementine', 'truffe', 'celeri'],
 };
+
+const TITLE_RECIPE_KEYWORDS = [
+  'recette', 'soupe', 'veloute', 'salade', 'curry', 'gratin', 'quiche', 'pizza', 'burger', 'tacos',
+  'omelette', 'crepe', 'gateau', 'tarte', 'brownie', 'cookie', 'muffin', 'pancake', 'riz', 'risotto',
+  'pates', 'lasagne', 'ravioli', 'gnocchi', 'sauce', 'plat', 'dessert', 'poisson', 'poulet', 'boeuf',
+  'porc', 'agneau', 'tofu', 'lentilles', 'pois chiches', 'dhal', 'tajine', 'cassoulet', 'sandwich',
+];
+
+const ALERT_CATEGORY_COMPLETE = {
+  name: 'A completer',
+  color: '#F59E0B',
+};
+
+const ALERT_CATEGORY_VERIFY = {
+  name: 'A verifier',
+  color: '#EF4444',
+};
+
+function normalizeTextForMatch(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function titleLooksLikeRecipe(title) {
+  const normalizedTitle = normalizeTextForMatch(title);
+  if (!normalizedTitle) {
+    return { valid: true, matchedKeywords: [] };
+  }
+
+  const matchedKeywords = TITLE_RECIPE_KEYWORDS.filter((keyword) => normalizedTitle.includes(keyword));
+  return {
+    valid: matchedKeywords.length > 0,
+    matchedKeywords,
+  };
+}
+
+function getMissingImportFields(recipeData = {}) {
+  const missing = [];
+  const title = recipeData.title ? String(recipeData.title).trim() : '';
+  const imageUrl = recipeData.imageUrl ? String(recipeData.imageUrl).trim() : '';
+  const hasIngredients = Array.isArray(recipeData.ingredients) && recipeData.ingredients.length > 0;
+  const hasSteps = Array.isArray(recipeData.steps) && recipeData.steps.length > 0;
+
+  if (!title) missing.push('title');
+  if (!imageUrl) missing.push('image');
+  if (!hasIngredients) missing.push('ingredients');
+  if (!hasSteps) missing.push('steps');
+
+  return missing;
+}
+
+async function scrapeRecipeWithRetries(url) {
+  const maxAttempts = Number(process.env.IMPORT_URL_RETRY_ATTEMPTS || 3);
+  let recipeData = null;
+  let lastScrapeError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      recipeData = await scrapeRecipe(url);
+      lastScrapeError = null;
+      break;
+    } catch (error) {
+      lastScrapeError = error;
+      if (attempt < maxAttempts) {
+        const delay = Math.min(2500, 400 * Math.pow(2, attempt - 1));
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  if (!recipeData) {
+    throw lastScrapeError || new Error('Extraction impossible');
+  }
+
+  return recipeData;
+}
+
+async function persistImportedRecipe({ url, recipeData, forceImportUnverifiedTitle = false }) {
+  const missingFields = getMissingImportFields(recipeData);
+  const titleRaw = recipeData.title ? String(recipeData.title).trim() : '';
+  const titleCheck = titleLooksLikeRecipe(titleRaw);
+  const requiresTitleVerification = Boolean(titleRaw) && !titleCheck.valid;
+
+  if (requiresTitleVerification && !forceImportUnverifiedTitle) {
+    return {
+      needsTitleVerification: true,
+      recipePreview: {
+        title: titleRaw,
+        imageUrl: recipeData.imageUrl || null,
+        sourceUrl: recipeData.sourceUrl || url,
+      },
+      missingFields,
+      titleCheck,
+    };
+  }
+
+  const insertPayload = {
+    title: titleRaw || 'Recette importee',
+    image_url: recipeData.imageUrl || null,
+    prep_time: recipeData.prepTime || null,
+    servings: recipeData.servings || null,
+    ingredients: Array.isArray(recipeData.ingredients) ? recipeData.ingredients : [],
+    steps: Array.isArray(recipeData.steps) ? recipeData.steps : [],
+    source_url: recipeData.sourceUrl || url,
+  };
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('recipes')
+    .insert([insertPayload])
+    .select('id')
+    .single();
+
+  if (insertError) throw insertError;
+
+  const assignedCategoryIds = new Set();
+  let autoDetected = false;
+  let confident = true;
+
+  if (missingFields.length > 0) {
+    const toCompleteCategoryId = await getOrCreateCategory(ALERT_CATEGORY_COMPLETE.name, ALERT_CATEGORY_COMPLETE.color);
+    assignedCategoryIds.add(toCompleteCategoryId);
+  }
+
+  if (requiresTitleVerification || forceImportUnverifiedTitle) {
+    const toVerifyCategoryId = await getOrCreateCategory(ALERT_CATEGORY_VERIFY.name, ALERT_CATEGORY_VERIFY.color);
+    assignedCategoryIds.add(toVerifyCategoryId);
+    confident = false;
+  }
+
+  if (!assignedCategoryIds.size) {
+    const detection = await detectCategory(insertPayload.title, insertPayload.ingredients);
+    assignedCategoryIds.add(detection.id);
+    autoDetected = true;
+    confident = detection.confident;
+  }
+
+  for (const categoryId of assignedCategoryIds) {
+    await assignCategoryToRecipe(inserted.id, categoryId);
+  }
+
+  const recipeWithCategories = await fetchRecipeWithCategoriesById(inserted.id);
+  const categories = (recipeWithCategories.recipe_categories || []).map((rc) => rc.categories).filter(Boolean);
+
+  return {
+    needsTitleVerification: false,
+    recipe: {
+      ...recipeWithCategories,
+      categories,
+      missingFields,
+      incomplete: missingFields.length > 0,
+      requiresTitleVerification,
+      autoDetected,
+      confident,
+      externalOnly: false,
+    },
+  };
+}
 
 function normalizeCategoryIds(categoryIds) {
   if (!Array.isArray(categoryIds)) return null;
@@ -119,51 +280,32 @@ async function processImport(jobId, urls = []) {
       }
       try {
         console.log(`[Import Job ${jobId}] Processing URL ${i + 1}/${urls.length}: ${url}`);
-        const recipe = await scrapeRecipe(url);
-        
-        // Validate and normalize the recipe data
-        const title = recipe.title ? String(recipe.title).trim() : null;
-        
-        // Skip recipes without a title
-        if (!title) {
-          results.failed += 1;
-          results.errors.push({ url, message: 'Titre introuvable' });
-          console.error(`[Import Job ${jobId}] ✗ Failed: ${url} - Titre introuvable`);
-          continue;
+        const recipeData = await scrapeRecipeWithRetries(url);
+        const persisted = await persistImportedRecipe({ url, recipeData, forceImportUnverifiedTitle: false });
+
+        if (persisted.needsTitleVerification) {
+          throw new Error('Titre douteux: import annule pour validation manuelle');
         }
-        
-        const payload = {
-          title,
-          image_url: recipe.imageUrl || null,
-          prep_time: recipe.prepTime || null,
-          servings: recipe.servings || null,
-          ingredients: Array.isArray(recipe.ingredients) && recipe.ingredients.length > 0 ? recipe.ingredients : [],
-          steps: Array.isArray(recipe.steps) && recipe.steps.length > 0 ? recipe.steps : [],
-          source_url: url,
-        };
 
-        const { data: inserted, error: insertError } = await supabase
-          .from('recipes')
-          .insert([payload])
-          .select('id, title, source_url')
-          .single();
+        const recipe = persisted.recipe;
+        results.success += 1;
+        results.created.push({
+          id: recipe.id,
+          title: recipe.title,
+          source_url: recipe.source_url,
+          incomplete: recipe.incomplete,
+          requiresTitleVerification: recipe.requiresTitleVerification,
+        });
 
-        if (insertError) throw insertError;
-
-        const detection = await detectCategory(title, payload.ingredients);
-        await assignCategoryToRecipe(inserted.id, detection.id);
-
-        if (!detection.confident) {
+        if (!recipe.confident) {
           results.needsReview.push({
-            recipeId: inserted.id,
-            recipeTitle: title,
-            assignedCategory: detection.name,
+            recipeId: recipe.id,
+            recipeTitle: recipe.title,
+            assignedCategory: (recipe.categories || []).map((c) => c?.name).filter(Boolean).join(', '),
           });
         }
 
-        results.success += 1;
-        results.created.push(inserted);
-        console.log(`[Import Job ${jobId}] ✓ Success: ${title}`);
+        console.log(`[Import Job ${jobId}] ✓ Success: ${recipe.title}`);
       } catch (error) {
         results.failed += 1;
         const errorMsg = error.message || 'Import impossible';
@@ -491,75 +633,31 @@ router.post('/recipes', async (req, res) => {
 
 // POST /api/recipes/import
 router.post('/recipes/import', async (req, res) => {
-    const { url } = req.body;
+    const { url, forceImportUnverifiedTitle } = req.body;
     if (!url) {
         return res.status(400).json({ error: 'URL is required', field: 'url' });
     }
 
     try {
-        const recipeData = await scrapeRecipe(url);
+        const recipeData = await scrapeRecipeWithRetries(url);
+        const persisted = await persistImportedRecipe({
+          url,
+          recipeData,
+          forceImportUnverifiedTitle: Boolean(forceImportUnverifiedTitle),
+        });
 
-        const hasIngredients = Array.isArray(recipeData.ingredients) && recipeData.ingredients.length > 0;
-        const hasSteps = Array.isArray(recipeData.steps) && recipeData.steps.length > 0;
-        const isExternalOnly = !hasIngredients && !hasSteps;
-
-        // Count missing fields (at least 2 missing = incomplete), except external-only recipes.
-        const missingFields = [];
-        if (!recipeData.title || recipeData.title.trim() === '') missingFields.push('title');
-        if (!hasIngredients) missingFields.push('ingredients');
-        if (!hasSteps) missingFields.push('steps');
-
-        const isIncomplete = !isExternalOnly && missingFields.length >= 2;
-
-        const insertPayload = isExternalOnly
-          ? {
-              title: (recipeData.title && recipeData.title.trim()) || 'Recette importee',
-              image_url: recipeData.imageUrl || null,
-              prep_time: null,
-              servings: null,
-              ingredients: [],
-              steps: [],
-              source_url: recipeData.sourceUrl || url,
-            }
-          : {
-              title: recipeData.title,
-              image_url: recipeData.imageUrl,
-              prep_time: recipeData.prepTime,
-              servings: recipeData.servings,
-              ingredients: recipeData.ingredients,
-              steps: recipeData.steps,
-              source_url: recipeData.sourceUrl,
-            };
-
-        const { data, error } = await supabase.from('recipes').insert([{
-            ...insertPayload,
-        }]).select().single();
-
-        if (error) throw error;
-
-        const detection = await detectCategory(recipeData.title, recipeData.ingredients);
-        await assignCategoryToRecipe(data.id, detection.id);
-
-        if (isIncomplete) {
-            return res.status(201).json({
-              ...data,
-              categories: [{ id: detection.id, name: detection.name }],
-              autoDetected: true,
-              confident: detection.confident,
-              needsCategoryConfirmation: !detection.confident,
-              incomplete: true,
-              missingFields,
-            });
+        if (persisted.needsTitleVerification) {
+          return res.status(422).json({
+            error: 'Le titre extrait ne ressemble pas a un titre de recette.',
+            code: 'TITLE_NEEDS_VERIFICATION',
+            canForceImport: true,
+            missingFields: persisted.missingFields,
+            titleKeywordsMatched: persisted.titleCheck.matchedKeywords,
+            recipePreview: persisted.recipePreview,
+          });
         }
 
-        res.status(201).json({
-          ...data,
-          categories: [{ id: detection.id, name: detection.name }],
-          autoDetected: true,
-          confident: detection.confident,
-          needsCategoryConfirmation: !detection.confident,
-          externalOnly: isExternalOnly,
-        });
+        res.status(201).json(persisted.recipe);
     } catch (err) {
         if (err.partial) {
             return res.status(422).json({ error: err.message, url });

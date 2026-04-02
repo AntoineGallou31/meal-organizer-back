@@ -4,6 +4,49 @@ const cheerio = require('cheerio')
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY
 const SHORT_LINK_DOMAINS = ['pin.it', 'bit.ly', 'tinyurl.com', 'shorturl.at', 'ow.ly', 'buff.ly', 't.co']
 
+const DEFAULT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Connection': 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
+}
+
+const RETRY_ATTEMPTS = Number(process.env.SCRAPER_RETRY_ATTEMPTS || 3)
+const BACKOFF_BASE_MS = Number(process.env.SCRAPER_BACKOFF_BASE_MS || 500)
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function extractHtmlFromResponseData(data) {
+  return typeof data === 'string' ? data : ''
+}
+
+function hasRecipeSignals(content) {
+  if (!content) return false
+  return /application\/ld\+json|recipeIngredient|recipeInstructions|Ingr[ée]dients?|Pr[ée]paration|instructions?|\bétape\b/i.test(content)
+}
+
+async function withRetry(taskName, fn, attempts = RETRY_ATTEMPTS) {
+  let lastError = null
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fn(i)
+    } catch (error) {
+      lastError = error
+      const isLast = i === attempts - 1
+      if (isLast) break
+      const jitter = Math.floor(Math.random() * 150)
+      const backoff = BACKOFF_BASE_MS * Math.pow(2, i) + jitter
+      console.log(`[scraper] ${taskName} attempt ${i + 1}/${attempts} failed: ${error.message || error}. retrying in ${backoff}ms`)
+      await sleep(backoff)
+    }
+  }
+  throw lastError
+}
+
 function isShortLink(url) {
   return SHORT_LINK_DOMAINS.some(domain => url.includes(domain))
 }
@@ -12,13 +55,11 @@ async function resolveUrl(url) {
   if (!isShortLink(url) && !url.includes('pinterest.com')) return url
 
   try {
-    const res = await axios.get(url, {
-      timeout: 10000,
+    const res = await withRetry('resolveUrl', async () => axios.get(url, {
+      timeout: 12000,
       maxRedirects: 10,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-      }
-    })
+      headers: DEFAULT_HEADERS,
+    }))
 
     const finalUrl = res.request?.res?.responseUrl || res.config.url || url
 
@@ -48,19 +89,14 @@ async function resolveUrl(url) {
 
 async function fetchPage(url) {
   console.log(`[scraper] fetchPage start for: ${url}`)
-  // Tentative 1 : fetch direct avec headers Chrome
+  // Tentative 1 : fetch direct avec retries
   try {
-    const res = await axios.get(url, {
+    const res = await withRetry('fetch direct', async () => axios.get(url, {
       timeout: 15000,
       maxRedirects: 5,
       decompress: true,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
+        ...DEFAULT_HEADERS,
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
@@ -68,16 +104,14 @@ async function fetchPage(url) {
         'Cache-Control': 'max-age=0',
         'Referer': 'https://www.google.fr/'
       }
-    })
-    // Si la page ne contient pas d'indicateurs de recette, elle peut être rendue côté client
-    // (Shopify / themes / JS). Dans ce cas, ne pas retourner le HTML direct et forcer
-    // les fallbacks (ScraperAPI / Jina) pour récupérer le contenu rendu.
-    const hasRecipeContent = res.data && (res.data.includes('Ingrédients') || res.data.includes('Préparation') || res.data.includes('ingredients') || res.data.includes('Préparation:'))
-    if (!hasRecipeContent) {
-      console.log('[scraper] Aucun contenu de recette détecté dans le HTML brut — fallback vers rendu JS (ScraperAPI/Jina)')
-      throw new Error('No recipe content')
+    }))
+
+    const html = extractHtmlFromResponseData(res.data)
+    if (hasRecipeSignals(html)) {
+      return { html, method: 'direct' }
     }
-    return { html: res.data, method: 'direct' }
+
+    console.log('[scraper] Direct fetch succeeded but weak recipe signals. trying richer fallbacks...')
   } catch (err) {
     const status = err.response?.status
     console.log(`[scraper] Fetch direct échoué (${status ?? 'réseau'}), tenter ScraperAPI si clé présente...`)
@@ -88,9 +122,16 @@ async function fetchPage(url) {
     try {
       const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=fr&render=true`
       console.log(`[scraper] ScraperAPI key present — calling ScraperAPI: ${scraperUrl}`)
-      const res = await axios.get(scraperUrl, { timeout: 30000 })
+      const res = await withRetry('fetch scraperapi', async () => axios.get(scraperUrl, {
+        timeout: 35000,
+        headers: DEFAULT_HEADERS,
+      }))
       console.log(`[scraper] ScraperAPI response status: ${res.status} bodyLength=${String(res.data || '').length}`)
-      return { html: res.data, method: 'scraperapi' }
+      const html = extractHtmlFromResponseData(res.data)
+      if (hasRecipeSignals(html)) {
+        return { html, method: 'scraperapi' }
+      }
+      console.log('[scraper] ScraperAPI returned weak recipe signals, trying Jina fallback...')
     } catch (err) {
       console.log('[scraper] ScraperAPI échoué:', err.message || err)
       console.log('[scraper] Fallback vers Jina.ai reader...')
@@ -100,10 +141,13 @@ async function fetchPage(url) {
   // Tentative 3 : Jina AI Reader (gratuit, sans clé)
   try {
     const jinaUrl = `https://r.jina.ai/${url}`
-    const res = await axios.get(jinaUrl, {
-      timeout: 20000,
-      headers: { 'Accept': 'text/markdown,text/plain;q=0.9,*/*;q=0.8' }
-    })
+    const res = await withRetry('fetch jina', async () => axios.get(jinaUrl, {
+      timeout: 22000,
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Accept': 'text/markdown,text/plain;q=0.9,*/*;q=0.8'
+      }
+    }))
     console.log(`[scraper] Jina.ai reader used — fetched markdown length=${String(res.data || '').length}`)
     return { html: res.data, method: 'jina', isMarkdown: true }
   } catch (err) {
