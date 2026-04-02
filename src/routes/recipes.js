@@ -40,11 +40,6 @@ const ALERT_CATEGORY_COMPLETE = {
   color: '#F59E0B',
 };
 
-const ALERT_CATEGORY_VERIFY = {
-  name: 'A verifier',
-  color: '#EF4444',
-};
-
 function normalizeTextForMatch(value) {
   return String(value || '')
     .toLowerCase()
@@ -154,8 +149,8 @@ async function persistImportedRecipe({ url, recipeData, forceImportUnverifiedTit
   }
 
   if (requiresTitleVerification || forceImportUnverifiedTitle) {
-    const toVerifyCategoryId = await getOrCreateCategory(ALERT_CATEGORY_VERIFY.name, ALERT_CATEGORY_VERIFY.color);
-    assignedCategoryIds.add(toVerifyCategoryId);
+    const toCompleteCategoryId = await getOrCreateCategory(ALERT_CATEGORY_COMPLETE.name, ALERT_CATEGORY_COMPLETE.color);
+    assignedCategoryIds.add(toCompleteCategoryId);
     confident = false;
   }
 
