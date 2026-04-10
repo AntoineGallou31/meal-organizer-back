@@ -382,16 +382,24 @@ router.post('/recipes/import-cancel', async (req, res) => {
 });
 
 function extractUrlsFromBody(body = {}) {
-  if (Array.isArray(body.urls)) {
-    return [...new Set(body.urls.map((url) => String(url || '').trim()).filter(Boolean))];
-  }
+  let rawUrls = [];
 
-  if (typeof body.content === 'string') {
+  if (Array.isArray(body)) {
+    rawUrls = body;
+  } else if (Array.isArray(body.urls)) {
+    rawUrls = body.urls;
+  } else if (Array.isArray(body.links)) {
+    rawUrls = body.links;
+  } else if (typeof body.content === 'string') {
     const matches = body.content.match(/https?:\/\/[^\s"'<>]+/g) || [];
-    return [...new Set(matches.map((url) => url.trim()).filter(Boolean))];
+    rawUrls = matches;
   }
 
-  return [];
+  return [...new Set(
+    rawUrls
+      .map((url) => String(url || '').trim())
+      .filter((url) => /^https?:\/\//i.test(url)),
+  )];
 }
 
 function normalizeRecipePayload(body = {}, { partial = false } = {}) {
@@ -662,8 +670,7 @@ router.post('/recipes/import', async (req, res) => {
     }
 });
 
-// POST /api/recipes/import-pinterest-export
-router.post('/recipes/import-pinterest-export', async (req, res) => {
+async function createBulkImportJob(req, res, endpointLabel) {
   try {
     const urls = extractUrlsFromBody(req.body || {});
     if (!urls.length) {
@@ -705,8 +712,18 @@ router.post('/recipes/import-pinterest-export', async (req, res) => {
 
     return res.status(202).json(job);
   } catch (error) {
-    handleError(error, res, { endpoint: 'POST /api/recipes/import-pinterest-export' });
+    handleError(error, res, { endpoint: endpointLabel });
   }
+}
+
+// POST /api/recipes/import-urls
+router.post('/recipes/import-urls', async (req, res) => {
+  return createBulkImportJob(req, res, 'POST /api/recipes/import-urls');
+});
+
+// POST /api/recipes/import-pinterest-export (legacy alias)
+router.post('/recipes/import-pinterest-export', async (req, res) => {
+  return createBulkImportJob(req, res, 'POST /api/recipes/import-pinterest-export');
 });
 
 // GET /api/recipes/import-status/:jobId
