@@ -467,10 +467,20 @@ function parseMarkdownRecipe(markdown, url) {
 async function scrapeRecipe(rawUrl) {
   const url = await resolveUrl(rawUrl)
   console.log(`URL résolue : ${url}`)
-    const { html, isMarkdown, method } = await fetchPage(url)
+  const { html, isMarkdown, method } = await fetchPage(url)
+  const contentSnippet = String(html || '').slice(0, 1200).replace(/\s+/g, ' ')
 
   if (isMarkdown) {
-    return parseMarkdownRecipe(html, url)
+    const markdownResult = parseMarkdownRecipe(html, url)
+    return {
+      ...markdownResult,
+      scrapingMeta: {
+        method,
+        parser: 'Markdown',
+        resolvedUrl: url,
+        contentSnippet,
+      },
+    }
   }
 
   const $ = cheerio.load(html)
@@ -513,7 +523,13 @@ async function scrapeRecipe(rawUrl) {
       ingredients: [],
       steps: [],
       sourceUrl: url,
-      partial: true
+      partial: true,
+      scrapingMeta: {
+        method,
+        parser: 'none',
+        resolvedUrl: url,
+        contentSnippet,
+      },
     }
   }
 
@@ -539,7 +555,13 @@ async function scrapeRecipe(rawUrl) {
     title: result.title || $('h1').first().text().trim() || 'Recette sans titre',
     imageUrl: result.imageUrl || $('meta[property="og:image"]').attr('content') || null,
     sourceUrl: url,
-    partial
+    partial,
+    scrapingMeta: {
+      method,
+      parser: parserUsed || 'unknown',
+      resolvedUrl: url,
+      contentSnippet,
+    },
   }
 }
 
