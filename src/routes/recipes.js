@@ -84,6 +84,28 @@ function cleanLine(value) {
     .trim();
 }
 
+function normalizeImportedText(value) {
+  if (typeof value !== 'string') return value;
+
+  return value
+    .replace(/&#39;/g, "'")
+    .replace(/\(\(/g, '(')
+    .replace(/\)\)/g, ')');
+}
+
+function normalizeImportedRecipeData(recipeData = {}) {
+  return {
+    ...recipeData,
+    title: normalizeImportedText(recipeData.title),
+    ingredients: Array.isArray(recipeData.ingredients)
+      ? recipeData.ingredients.map((line) => normalizeImportedText(String(line || '')))
+      : recipeData.ingredients,
+    steps: Array.isArray(recipeData.steps)
+      ? recipeData.steps.map((line) => normalizeImportedText(String(line || '')))
+      : recipeData.steps,
+  };
+}
+
 function normalizeForComparison(value) {
   return String(value || '')
     .normalize('NFD')
@@ -399,17 +421,18 @@ async function persistImportedRecipe({
   recipeData,
   forceImportMode = null,
 }) {
-  const missingFields = getMissingImportFields(recipeData);
-  const titleRaw = recipeData.title ? String(recipeData.title).trim() : '';
+  const normalizedRecipeData = normalizeImportedRecipeData(recipeData);
+  const missingFields = getMissingImportFields(normalizedRecipeData);
+  const titleRaw = normalizedRecipeData.title ? String(normalizedRecipeData.title).trim() : '';
   const titleCheck = titleLooksLikeRecipe(titleRaw);
   const coherenceCheck = evaluateRecipeCoherence({
     title: titleRaw,
-    ingredients: recipeData.ingredients,
-    steps: recipeData.steps,
+    ingredients: normalizedRecipeData.ingredients,
+    steps: normalizedRecipeData.steps,
   });
   const validationReport = buildImportValidationReport({
     url,
-    recipeData,
+    recipeData: normalizedRecipeData,
     titleCheck,
     coherenceCheck,
     missingFields,
@@ -421,17 +444,17 @@ async function persistImportedRecipe({
 
   const preparedRecipeData = forceMode === 'contentless'
     ? {
-      ...recipeData,
+      ...normalizedRecipeData,
       ingredients: [],
       steps: [],
     }
     : forceMode === 'normal' && hasValidationIssues
     ? {
-      ...recipeData,
-      ingredients: sanitizeImportedIngredients(recipeData.ingredients),
-      steps: sanitizeImportedSteps(recipeData.steps),
+      ...normalizedRecipeData,
+      ingredients: sanitizeImportedIngredients(normalizedRecipeData.ingredients),
+      steps: sanitizeImportedSteps(normalizedRecipeData.steps),
     }
-    : recipeData;
+    : normalizedRecipeData;
 
   if (hasValidationIssues && !forceMode) {
     return {
@@ -442,8 +465,8 @@ async function persistImportedRecipe({
       canImportWithoutContent: validationReport.canImportWithoutContent,
       recipePreview: {
         title: titleRaw,
-        imageUrl: recipeData.imageUrl || null,
-        sourceUrl: recipeData.sourceUrl || url,
+        imageUrl: normalizedRecipeData.imageUrl || null,
+        sourceUrl: normalizedRecipeData.sourceUrl || url,
       },
       missingFields,
       titleCheck,
@@ -462,8 +485,8 @@ async function persistImportedRecipe({
       canImportWithoutContent: validationReport.canImportWithoutContent,
       recipePreview: {
         title: titleRaw,
-        imageUrl: recipeData.imageUrl || null,
-        sourceUrl: recipeData.sourceUrl || url,
+        imageUrl: normalizedRecipeData.imageUrl || null,
+        sourceUrl: normalizedRecipeData.sourceUrl || url,
       },
       missingFields,
       titleCheck,
@@ -482,6 +505,28 @@ async function persistImportedRecipe({
     steps: Array.isArray(preparedRecipeData.steps) ? preparedRecipeData.steps : [],
     source_url: preparedRecipeData.sourceUrl || url,
   };
+
+  const { data: existingRecipe, error: duplicateCheckError } = await supabase
+    .from('recipes')
+    .select('id,title,source_url')
+    .eq('title', insertPayload.title)
+    .eq('source_url', insertPayload.source_url)
+    .maybeSingle();
+
+  if (duplicateCheckError) throw duplicateCheckError;
+
+  if (existingRecipe) {
+    throw new APIError(
+      'Une recette avec le meme nom et la meme URL existe deja',
+      409,
+      'DUPLICATE_IMPORTED_RECIPE',
+      {
+        existingRecipeId: existingRecipe.id,
+        title: existingRecipe.title,
+        sourceUrl: existingRecipe.source_url,
+      }
+    );
+  }
 
   const { data: inserted, error: insertError } = await supabase
     .from('recipes')
@@ -1116,6 +1161,15 @@ router.post('/recipes/import', async (req, res) => {
 
         res.status(201).json(persisted.recipe);
     } catch (err) {
+        if (err instanceof APIError) {
+          return res.status(err.statusCode).json({
+            error: err.message,
+            code: err.code,
+            url,
+            details: err.details || null,
+          });
+        }
+
         if (err.partial) {
             return res.status(422).json({ error: err.message, url });
         }
