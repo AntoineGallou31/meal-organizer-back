@@ -340,14 +340,16 @@ function buildImportValidationReport({ url, recipeData, titleCheck, coherenceChe
   const hardBlockFields = new Set(['title', 'image']);
   const hardErrors = fieldErrors.filter((entry) => hardBlockFields.has(entry.field));
   const softErrors = fieldErrors.filter((entry) => !hardBlockFields.has(entry.field));
+  const hasContentIssues = softErrors.some((entry) => entry.field === 'ingredients' || entry.field === 'steps' || entry.field === 'content');
 
   return {
     hasIssues: fieldErrors.length > 0,
-    validationType: hardErrors.length > 0 ? 'hard' : (softErrors.length > 0 ? 'soft' : null),
+    validationType: hardErrors.length > 0 ? 'hard' : (softErrors.length > 0 ? 'content' : null),
     hardErrors,
     softErrors,
-    canImportNormally: hardErrors.length === 0 && softErrors.length > 0,
-    canForceIncomplete: fieldErrors.length > 0,
+    canImportNormally: fieldErrors.length === 0,
+    canForceIncomplete: hardErrors.length > 0,
+    canImportWithoutContent: hasContentIssues && hardErrors.length === 0,
     fieldErrors,
     scrapedContent: {
       sourceUrl: recipeData.sourceUrl || url,
@@ -414,10 +416,16 @@ async function persistImportedRecipe({
   });
   const incoherentImport = !coherenceCheck.isCoherent;
   const hasValidationIssues = validationReport.fieldErrors.length > 0;
-  const forceMode = forceImportMode === 'incomplete' || forceImportMode === 'normal' ? forceImportMode : null;
+  const forceMode = forceImportMode === 'incomplete' || forceImportMode === 'contentless' || forceImportMode === 'normal' ? forceImportMode : null;
   const canProceedNormally = validationReport.hardErrors.length === 0;
 
-  const preparedRecipeData = forceMode === 'normal' && hasValidationIssues
+  const preparedRecipeData = forceMode === 'contentless'
+    ? {
+      ...recipeData,
+      ingredients: [],
+      steps: [],
+    }
+    : forceMode === 'normal' && hasValidationIssues
     ? {
       ...recipeData,
       ingredients: sanitizeImportedIngredients(recipeData.ingredients),
@@ -431,6 +439,7 @@ async function persistImportedRecipe({
       validationType: validationReport.validationType,
       canImportNormally: validationReport.canImportNormally,
       canForceIncomplete: validationReport.canForceIncomplete,
+      canImportWithoutContent: validationReport.canImportWithoutContent,
       recipePreview: {
         title: titleRaw,
         imageUrl: recipeData.imageUrl || null,
@@ -450,6 +459,7 @@ async function persistImportedRecipe({
       validationType: validationReport.validationType,
       canImportNormally: false,
       canForceIncomplete: validationReport.canForceIncomplete,
+      canImportWithoutContent: validationReport.canImportWithoutContent,
       recipePreview: {
         title: titleRaw,
         imageUrl: recipeData.imageUrl || null,
@@ -512,8 +522,12 @@ async function persistImportedRecipe({
       ...mappedRecipe,
       categories,
       missingFields,
-      incomplete: missingFields.length > 0,
-      importMode: forceMode === 'incomplete' ? 'incomplete' : 'normal',
+      incomplete: forceMode === 'incomplete',
+      importMode: forceMode === 'incomplete'
+        ? 'incomplete'
+        : forceMode === 'contentless'
+          ? 'contentless'
+          : 'normal',
       autoDetected,
       confident,
       incoherentImport: mappedRecipe.incoherent_import,
@@ -636,6 +650,41 @@ async function processImport(jobId, urls = []) {
         const persisted = await persistImportedRecipe({ url, recipeData });
 
         if (persisted.needsImportReview) {
+          if (persisted.canImportWithoutContent) {
+            const importedWithoutContent = await persistImportedRecipe({
+              url,
+              recipeData,
+              forceImportMode: 'contentless',
+            });
+
+            if (importedWithoutContent.needsImportReview) {
+              throw new Error('Import sans contenu impossible')
+            }
+
+            const recipe = importedWithoutContent.recipe;
+            results.success += 1;
+            results.created.push({
+              id: recipe.id,
+              title: recipe.title,
+              source_url: recipe.source_url,
+              incomplete: recipe.incomplete,
+              requiresTitleVerification: recipe.requiresTitleVerification,
+              incoherentImport: recipe.incoherentImport,
+              restrictedDetail: recipe.restrictedDetail,
+            });
+
+            if (!recipe.confident) {
+              results.needsReview.push({
+                recipeId: recipe.id,
+                recipeTitle: recipe.title,
+                assignedCategory: (recipe.categories || []).map((c) => c?.name).filter(Boolean).join(', '),
+              });
+            }
+
+            console.log(`[Import Job ${jobId}] ✓ Imported without content: ${recipe.title}`);
+            continue;
+          }
+
           const reviewError = new Error('Import invalide: validation des champs échouée');
           reviewError.code = 'IMPORT_VALIDATION_FAILED';
           reviewError.details = {
@@ -1055,6 +1104,7 @@ router.post('/recipes/import', async (req, res) => {
             validationType: persisted.validationType,
             canImportNormally: Boolean(persisted.canImportNormally),
             canForceIncomplete: Boolean(persisted.canForceIncomplete),
+            canImportWithoutContent: Boolean(persisted.canImportWithoutContent),
             missingFields: persisted.missingFields,
             titleKeywordsMatched: persisted.titleCheck.matchedKeywords,
             recipePreview: persisted.recipePreview,
