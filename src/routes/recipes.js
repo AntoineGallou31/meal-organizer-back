@@ -695,44 +695,13 @@ async function processImport(jobId, urls = []) {
         const persisted = await persistImportedRecipe({ url, recipeData });
 
         if (persisted.needsImportReview) {
-          if (persisted.canImportWithoutContent) {
-            const importedWithoutContent = await persistImportedRecipe({
-              url,
-              recipeData,
-              forceImportMode: 'contentless',
-            });
-
-            if (importedWithoutContent.needsImportReview) {
-              throw new Error('Import sans contenu impossible')
-            }
-
-            const recipe = importedWithoutContent.recipe;
-            results.success += 1;
-            results.created.push({
-              id: recipe.id,
-              title: recipe.title,
-              source_url: recipe.source_url,
-              incomplete: recipe.incomplete,
-              requiresTitleVerification: recipe.requiresTitleVerification,
-              incoherentImport: recipe.incoherentImport,
-              restrictedDetail: recipe.restrictedDetail,
-            });
-
-            if (!recipe.confident) {
-              results.needsReview.push({
-                recipeId: recipe.id,
-                recipeTitle: recipe.title,
-                assignedCategory: (recipe.categories || []).map((c) => c?.name).filter(Boolean).join(', '),
-              });
-            }
-
-            console.log(`[Import Job ${jobId}] ✓ Imported without content: ${recipe.title}`);
-            continue;
-          }
-
           const reviewError = new Error('Import invalide: validation des champs échouée');
           reviewError.code = 'IMPORT_VALIDATION_FAILED';
           reviewError.details = {
+            validationType: persisted.validationType,
+            canForceIncomplete: Boolean(persisted.canForceIncomplete),
+            canImportWithoutContent: Boolean(persisted.canImportWithoutContent),
+            missingFields: persisted.missingFields,
             fieldErrors: persisted.fieldErrors,
             scrapedContent: persisted.scrapedContent,
             importValidation: persisted.importValidation,
