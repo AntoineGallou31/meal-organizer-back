@@ -62,7 +62,7 @@ router.get('/meal-plan', async (req, res) => {
         const weekDays = getWeekDays(week);
         const { data: mealPlans, error } = await supabase
             .from('meal_plan')
-            .select('*, recipes(id, title, image_url, prep_time)')
+            .select('*, recipes(id,title,image_url,prep_time,source_url,external_only,incoherent_import,restricted_detail,import_validation,recipe_categories(category_id,categories(id,name,color)))')
             .in('date', weekDays);
 
         if (error) throw error;

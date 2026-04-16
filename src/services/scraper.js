@@ -2,6 +2,10 @@ const axios = require('axios')
 const cheerio = require('cheerio')
 
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY
+const JINA_API_KEY = process.env.JINA_API_KEY
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5'
+const CLAUDE_MAX_INPUT_CHARS = Number(process.env.CLAUDE_MAX_INPUT_CHARS || 15000)
 const SHORT_LINK_DOMAINS = ['pin.it', 'bit.ly', 'tinyurl.com', 'shorturl.at', 'ow.ly', 'buff.ly', 't.co']
 
 const DEFAULT_HEADERS = {
@@ -15,6 +19,12 @@ const DEFAULT_HEADERS = {
 
 const RETRY_ATTEMPTS = Number(process.env.SCRAPER_RETRY_ATTEMPTS || 3)
 const BACKOFF_BASE_MS = Number(process.env.SCRAPER_BACKOFF_BASE_MS || 500)
+const PUPPETEER_ENABLED = process.env.SCRAPER_USE_PUPPETEER !== 'false'
+
+let browser = null
+let puppeteerModule = null
+let puppeteerChecked = false
+let puppeteerUnavailableLogged = false
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -24,10 +34,198 @@ function extractHtmlFromResponseData(data) {
   return typeof data === 'string' ? data : ''
 }
 
+function truncate(text, max = 120) {
+  const str = String(text || '')
+  return str.length > max ? `${str.slice(0, max)}...` : str
+}
+
 function hasRecipeSignals(content) {
   if (!content) return false
   return /application\/ld\+json|recipeIngredient|recipeInstructions|Ingr[ée]dients?|Pr[ée]paration|instructions?|\bétape\b/i.test(content)
 }
+
+function scoreContentQuality(content) {
+  if (!content) return 0
+  let score = 0
+  if (content.length > 4000) score += 2
+  if (content.length > 15000) score += 1
+  if (hasRecipeSignals(content)) score += 3
+  if (/application\/ld\+json|"@type"\s*:\s*"Recipe"/i.test(content)) score += 2
+  return score
+}
+
+function recipeCompletenessScore(recipe) {
+  if (!recipe || typeof recipe !== 'object') return 0
+  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients.length : 0
+  const steps = Array.isArray(recipe.steps) ? recipe.steps.length : 0
+
+  let score = 0
+  if (recipe.title) score += 2
+  if (recipe.imageUrl) score += 1
+  if (ingredients >= 3) score += 3
+  else if (ingredients > 0) score += 1
+  if (steps >= 2) score += 3
+  else if (steps > 0) score += 1
+  return score
+}
+
+function parseDurationToMinutes(value) {
+  if (value == null || value === '') return null
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+
+  const text = String(value).toLowerCase()
+  const hourMatch = text.match(/(\d+)\s*h/)
+  const minMatch = text.match(/(\d+)\s*(?:m|min)/)
+
+  const hours = hourMatch ? Number(hourMatch[1]) : 0
+  const mins = minMatch ? Number(minMatch[1]) : 0
+  const fromHuman = (hours * 60) + mins
+  if (fromHuman > 0) return fromHuman
+
+  const num = Number.parseInt(text.replace(/[^\d]/g, ''), 10)
+  return Number.isFinite(num) ? num : null
+}
+
+function parseClaudeJson(rawText) {
+  const clean = String(rawText || '').replace(/```json|```/g, '').trim()
+  return JSON.parse(clean)
+}
+
+function buildClaudeInput(content, isMarkdown) {
+  if (isMarkdown) return String(content || '').slice(0, CLAUDE_MAX_INPUT_CHARS)
+
+  const $ = cheerio.load(String(content || ''))
+  const title = $('title').first().text().trim() || 'N/A'
+  const desc = $('meta[name="description"]').attr('content') || 'N/A'
+
+  const text = $('body').text().replace(/\s+/g, ' ').trim()
+  return `TITLE: ${title}\nDESCRIPTION: ${desc}\n\n${text}`.slice(0, CLAUDE_MAX_INPUT_CHARS)
+}
+
+async function extractWithClaude({ url, content, isMarkdown }) {
+  if (!ANTHROPIC_API_KEY) return null
+
+  const prompt = `Tu es un extracteur de recettes.\nRetourne uniquement un JSON valide (sans markdown) avec la structure:\n{\n  "title": "...",\n  "image": "https://... ou null",\n  "ingredients": ["..."],\n  "instructions": ["..."],\n  "duration": "45 min ou null",\n  "servings": "4 personnes ou null",\n  "confidence": 0\n}\n\nRègles:\n- title: nom de recette propre\n- image: URL absolue si trouvée\n- ingredients: liste d'ingrédients\n- instructions: liste d'étapes\n- confidence: 0-100 selon fiabilité\n\nURL: ${url}\n\nContenu:\n${buildClaudeInput(content, isMarkdown)}`
+
+  try {
+    const res = await axios.post('https://api.anthropic.com/v1/messages', {
+      model: ANTHROPIC_MODEL,
+      max_tokens: 1400,
+      messages: [{ role: 'user', content: prompt }],
+    }, {
+      timeout: 45000,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      }
+    })
+
+    const text = res?.data?.content?.[0]?.text || ''
+    const parsed = parseClaudeJson(text)
+
+    const ingredients = Array.isArray(parsed.ingredients)
+      ? parsed.ingredients.map((item) => String(item || '').trim()).filter(Boolean)
+      : []
+    const steps = Array.isArray(parsed.instructions)
+      ? parsed.instructions.map((item) => String(item || '').trim()).filter(Boolean)
+      : []
+
+    return {
+      title: parsed.title ? String(parsed.title).trim() : null,
+      imageUrl: parsed.image ? String(parsed.image).trim() : null,
+      prepTime: parseDurationToMinutes(parsed.duration),
+      servings: parsed.servings ? String(parsed.servings).trim() : null,
+      ingredients,
+      steps,
+      sourceUrl: url,
+      partial: ingredients.length === 0 || steps.length === 0,
+      confidence: Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : null,
+      aiEnhanced: true,
+    }
+  } catch (err) {
+    console.log(`[scraper] Claude fallback indisponible: ${truncate(err.message || err, 180)}`)
+    return null
+  }
+}
+
+function mergeRecipeResults(baseResult, claudeResult) {
+  if (!claudeResult) return baseResult
+  if (!baseResult) return claudeResult
+
+  const baseScore = recipeCompletenessScore(baseResult)
+  const claudeScore = recipeCompletenessScore(claudeResult)
+  const winner = claudeScore > baseScore ? claudeResult : baseResult
+  const other = winner === claudeResult ? baseResult : claudeResult
+
+  return {
+    ...winner,
+    title: winner.title || other.title || null,
+    imageUrl: winner.imageUrl || other.imageUrl || null,
+    prepTime: winner.prepTime ?? other.prepTime ?? null,
+    servings: winner.servings || other.servings || null,
+    ingredients: (winner.ingredients && winner.ingredients.length ? winner.ingredients : other.ingredients) || [],
+    steps: (winner.steps && winner.steps.length ? winner.steps : other.steps) || [],
+    partial: !((winner.ingredients && winner.ingredients.length) && (winner.steps && winner.steps.length)),
+    aiEnhanced: Boolean(baseResult.aiEnhanced || claudeResult.aiEnhanced),
+  }
+}
+
+function getPuppeteer() {
+  if (puppeteerChecked) return puppeteerModule
+  puppeteerChecked = true
+  try {
+    // Optional dependency in this workspace
+    // eslint-disable-next-line global-require, import/no-extraneous-dependencies
+    puppeteerModule = require('puppeteer')
+    return puppeteerModule
+  } catch {
+    puppeteerModule = null
+    return null
+  }
+}
+
+async function getBrowser() {
+  if (!PUPPETEER_ENABLED) return null
+  const puppeteer = getPuppeteer()
+  if (!puppeteer) {
+    if (!puppeteerUnavailableLogged) {
+      console.log('[scraper] Puppeteer non disponible dans meal-organizer-back (npm i puppeteer pour l\'activer).')
+      puppeteerUnavailableLogged = true
+    }
+    return null
+  }
+  if (browser) return browser
+
+  browser = await puppeteer.launch({
+    headless: 'new',
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-web-security',
+      '--ignore-certificate-errors',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-blink-features=AutomationControlled'
+    ]
+  })
+
+  return browser
+}
+
+async function closeBrowser() {
+  if (!browser) return
+  try {
+    await browser.close()
+  } catch {
+    // no-op
+  }
+  browser = null
+}
+
+process.once('SIGINT', () => { closeBrowser().finally(() => process.exit(130)) })
+process.once('SIGTERM', () => { closeBrowser().finally(() => process.exit(143)) })
 
 async function withRetry(taskName, fn, attempts = RETRY_ATTEMPTS) {
   let lastError = null
@@ -87,72 +285,149 @@ async function resolveUrl(url) {
 
 // ─── Fetch avec fallbacks ────────────────────────────────────────────────────
 
+async function fetchDirect(url) {
+  const res = await withRetry('fetch direct', async () => axios.get(url, {
+    timeout: 15000,
+    maxRedirects: 5,
+    decompress: true,
+    headers: {
+      ...DEFAULT_HEADERS,
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Cache-Control': 'max-age=0',
+      'Referer': 'https://www.google.fr/'
+    }
+  }))
+
+  const html = extractHtmlFromResponseData(res.data)
+  if (!html || html.length < 300) return null
+  return { html, method: 'direct', isMarkdown: false }
+}
+
+async function fetchViaJina(url) {
+  const jinaUrl = `https://r.jina.ai/${url}`
+  const res = await withRetry('fetch jina', async () => axios.get(jinaUrl, {
+    timeout: 22000,
+    headers: {
+      ...DEFAULT_HEADERS,
+      'Accept': 'text/markdown,text/plain;q=0.9,*/*;q=0.8',
+      ...(JINA_API_KEY ? { Authorization: `Bearer ${JINA_API_KEY}` } : {})
+    }
+  }))
+
+  const markdown = extractHtmlFromResponseData(res.data)
+  if (!markdown || markdown.length < 200) return null
+  return { html: markdown, method: 'jina', isMarkdown: true }
+}
+
+async function fetchViaPuppeteer(url) {
+  const liveBrowser = await getBrowser()
+  if (!liveBrowser) return null
+
+  let page
+  try {
+    page = await liveBrowser.newPage()
+    await page.setUserAgent(DEFAULT_HEADERS['User-Agent'])
+    await page.setViewport({ width: 1366, height: 900 })
+    await page.setBypassCSP(true)
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 40000 })
+
+    const html = await page.content()
+    if (!html || html.length < 300) return null
+    return { html, method: 'puppeteer', isMarkdown: false }
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err)
+    console.log(`[scraper] Puppeteer fallback échoué: ${truncate(msg, 180)}`)
+    return null
+  } finally {
+    if (page) {
+      try { await page.close() } catch { /* no-op */ }
+    }
+  }
+}
+
+async function fetchViaScraperApi(url) {
+  if (!SCRAPER_API_KEY) return null
+  const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=fr&render=true`
+  const res = await withRetry('fetch scraperapi', async () => axios.get(scraperUrl, {
+    timeout: 35000,
+    headers: DEFAULT_HEADERS,
+  }))
+
+  const html = extractHtmlFromResponseData(res.data)
+  if (!html || html.length < 300) return null
+  return { html, method: 'scraperapi', isMarkdown: false }
+}
+
+async function fetchOgImage(url) {
+  try {
+    const res = await axios.get(url, {
+      timeout: 12000,
+      maxRedirects: 5,
+      headers: {
+        ...DEFAULT_HEADERS,
+        'Accept': 'text/html,application/xhtml+xml'
+      },
+      responseType: 'text'
+    })
+    const html = extractHtmlFromResponseData(res.data).slice(0, 20000)
+    const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)
+    if (ogMatch && ogMatch[1]) return ogMatch[1]
+
+    const twMatch = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
+      || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)
+    if (twMatch && twMatch[1]) return twMatch[1]
+  } catch {
+    // no-op
+  }
+  return null
+}
+
 async function fetchPage(url) {
   console.log(`[scraper] fetchPage start for: ${url}`)
-  // Tentative 1 : fetch direct avec retries
+  let directResult = null
   try {
-    const res = await withRetry('fetch direct', async () => axios.get(url, {
-      timeout: 15000,
-      maxRedirects: 5,
-      decompress: true,
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
-        'Referer': 'https://www.google.fr/'
-      }
-    }))
-
-    const html = extractHtmlFromResponseData(res.data)
-    if (hasRecipeSignals(html)) {
-      return { html, method: 'direct' }
+    directResult = await fetchDirect(url)
+    if (directResult && hasRecipeSignals(directResult.html)) {
+      return directResult
     }
-
-    console.log('[scraper] Direct fetch succeeded but weak recipe signals. trying richer fallbacks...')
+    if (directResult) {
+      console.log('[scraper] Direct fetch ok mais signaux faibles. lancement des fallbacks en parallèle...')
+    }
   } catch (err) {
     const status = err.response?.status
-    console.log(`[scraper] Fetch direct échoué (${status ?? 'réseau'}), tenter ScraperAPI si clé présente...`)
+    console.log(`[scraper] Fetch direct échoué (${status ?? 'réseau'}), fallback multi-source...`)
   }
 
-  // Tentative 2 : ScraperAPI
-  if (SCRAPER_API_KEY) {
-    try {
-      const scraperUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(url)}&country_code=fr&render=true`
-      console.log(`[scraper] ScraperAPI key present — calling ScraperAPI: ${scraperUrl}`)
-      const res = await withRetry('fetch scraperapi', async () => axios.get(scraperUrl, {
-        timeout: 35000,
-        headers: DEFAULT_HEADERS,
-      }))
-      console.log(`[scraper] ScraperAPI response status: ${res.status} bodyLength=${String(res.data || '').length}`)
-      const html = extractHtmlFromResponseData(res.data)
-      if (hasRecipeSignals(html)) {
-        return { html, method: 'scraperapi' }
-      }
-      console.log('[scraper] ScraperAPI returned weak recipe signals, trying Jina fallback...')
-    } catch (err) {
-      console.log('[scraper] ScraperAPI échoué:', err.message || err)
-      console.log('[scraper] Fallback vers Jina.ai reader...')
-    }
+  const [jinaRes, puppeteerRes, scraperApiRes] = await Promise.allSettled([
+    fetchViaJina(url),
+    fetchViaPuppeteer(url),
+    fetchViaScraperApi(url),
+  ])
+
+  const candidates = []
+  if (directResult) candidates.push(directResult)
+  if (jinaRes.status === 'fulfilled' && jinaRes.value) candidates.push(jinaRes.value)
+  if (puppeteerRes.status === 'fulfilled' && puppeteerRes.value) candidates.push(puppeteerRes.value)
+  if (scraperApiRes.status === 'fulfilled' && scraperApiRes.value) candidates.push(scraperApiRes.value)
+
+  if (candidates.length === 0) {
+    throw new Error(`Impossible d'accéder à la page après toutes les tentatives : ${url}`)
   }
 
-  // Tentative 3 : Jina AI Reader (gratuit, sans clé)
-  try {
-    const jinaUrl = `https://r.jina.ai/${url}`
-    const res = await withRetry('fetch jina', async () => axios.get(jinaUrl, {
-      timeout: 22000,
-      headers: {
-        ...DEFAULT_HEADERS,
-        'Accept': 'text/markdown,text/plain;q=0.9,*/*;q=0.8'
-      }
-    }))
-    console.log(`[scraper] Jina.ai reader used — fetched markdown length=${String(res.data || '').length}`)
-    return { html: res.data, method: 'jina', isMarkdown: true }
-  } catch (err) {
-    throw new Error(`Impossible d'accéder à la page après 3 tentatives : ${url}`)
-  }
+  candidates.sort((a, b) => {
+    const sa = scoreContentQuality(a.html) + (a.method === 'puppeteer' ? 2 : 0)
+    const sb = scoreContentQuality(b.html) + (b.method === 'puppeteer' ? 2 : 0)
+    return sb - sa
+  })
+
+  const selected = candidates[0]
+  console.log(`[scraper] Source retenue: ${selected.method} (score=${scoreContentQuality(selected.html)}, len=${String(selected.html || '').length})`)
+
+  return selected
 }
 
 // ─── Parsing JSON-LD schema.org ──────────────────────────────────────────────
@@ -472,11 +747,19 @@ async function scrapeRecipe(rawUrl) {
 
   if (isMarkdown) {
     const markdownResult = parseMarkdownRecipe(html, url)
+    const claudeResult = markdownResult.partial
+      ? await extractWithClaude({ url, content: html, isMarkdown: true })
+      : null
+    const finalMarkdownResult = mergeRecipeResults(markdownResult, claudeResult)
+    if (!finalMarkdownResult.imageUrl) {
+      finalMarkdownResult.imageUrl = await fetchOgImage(url)
+    }
+
     return {
-      ...markdownResult,
+      ...finalMarkdownResult,
       scrapingMeta: {
         method,
-        parser: 'Markdown',
+        parser: finalMarkdownResult.aiEnhanced ? 'Markdown+Claude' : 'Markdown',
         resolvedUrl: url,
         contentSnippet,
       },
@@ -515,7 +798,9 @@ async function scrapeRecipe(rawUrl) {
     const htmlSnippet = String(html || '').slice(0, 800).replace(/\s+/g, ' ')
     const hasKeywords = Boolean((html || '').match(/Ingrédients|Préparation|ingredients|Préparation:/i))
     console.log(`[scraper] No parser matched. method=${method} title=${String(fallbackTitle)} hasKeywords=${hasKeywords} htmlSnippet=${htmlSnippet}`)
-    return {
+
+    const claudeFallback = await extractWithClaude({ url, content: html, isMarkdown: false })
+    const mergedFallback = mergeRecipeResults({
       title: fallbackTitle,
       imageUrl: fallbackImage,
       prepTime: null,
@@ -524,9 +809,15 @@ async function scrapeRecipe(rawUrl) {
       steps: [],
       sourceUrl: url,
       partial: true,
+      aiEnhanced: false,
+    }, claudeFallback)
+
+    return {
+      ...mergedFallback,
+      sourceUrl: url,
       scrapingMeta: {
         method,
-        parser: 'none',
+        parser: mergedFallback.aiEnhanced ? 'none+Claude' : 'none',
         resolvedUrl: url,
         contentSnippet,
       },
@@ -550,15 +841,20 @@ async function scrapeRecipe(rawUrl) {
     console.log(`[scraper] Full recipe extracted. method=${method} parser=${parserUsed} title=${result.title} ingredients=${result.ingredients.length} steps=${result.steps.length}`)
   }
 
+  const claudeResult = partial
+    ? await extractWithClaude({ url, content: html, isMarkdown: false })
+    : null
+  const mergedResult = mergeRecipeResults(result, claudeResult)
+
   return {
-    ...result,
-    title: result.title || $('h1').first().text().trim() || 'Recette sans titre',
-    imageUrl: result.imageUrl || $('meta[property="og:image"]').attr('content') || null,
+    ...mergedResult,
+    title: mergedResult.title || $('h1').first().text().trim() || 'Recette sans titre',
+    imageUrl: mergedResult.imageUrl || $('meta[property="og:image"]').attr('content') || await fetchOgImage(url) || null,
     sourceUrl: url,
-    partial,
+    partial: mergedResult.partial,
     scrapingMeta: {
       method,
-      parser: parserUsed || 'unknown',
+      parser: mergedResult.aiEnhanced ? `${parserUsed || 'unknown'}+Claude` : (parserUsed || 'unknown'),
       resolvedUrl: url,
       contentSnippet,
     },

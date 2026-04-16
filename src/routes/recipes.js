@@ -11,15 +11,6 @@ const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
-// Simple UUID v4 generator for compatibility
-function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
-    return v.toString(16);
-  });
-}
-
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SEASON_INGREDIENTS = {
   spring: ['asperge', 'petit pois', 'radis', 'epinard', 'fraise', 'artichaut', 'feve'],
@@ -676,6 +667,23 @@ function mapRecipeWithCategories(recipe) {
   };
 }
 
+function buildRecipeSelectString({ summary = false, categoryId = '' } = {}) {
+  if (summary) {
+    return `id,title,image_url,prep_time,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id)`;
+  }
+
+  return `id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
+}
+
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 async function fetchRecipeWithCategoriesById(recipeId) {
   const { data, error } = await supabase
     .from('recipes')
@@ -701,186 +709,6 @@ async function collectRecipeIdsByIngredientTerms(terms = []) {
   }
 
   return [...foundIds];
-}
-
-async function processImport(jobId, urls = []) {
-  const results = {
-    success: 0,
-    failed: 0,
-    errors: [],
-    created: [],
-    needsReview: [],
-  };
-
-  console.log(`[Import Job ${jobId}] Starting with ${urls.length} URLs`);
-
-  try {
-    for (let i = 0; i < urls.length; i += 1) {
-      const url = urls[i];
-      // Check job status to support cancellation
-      try {
-        const { data: jobRow } = await supabase.from('job_status').select('status').eq('id', jobId).maybeSingle();
-        if (jobRow && jobRow.status === 'cancelled') {
-          console.log(`[Import Job ${jobId}] Cancelled by user. Stopping processing.`);
-          await supabase
-            .from('job_status')
-            .update({
-              status: 'cancelled',
-              processed: results.success + results.failed,
-              results,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', jobId);
-          break;
-        }
-      } catch (err) {
-        console.error(`[Import Job ${jobId}] Erreur lors de la vérification du status:`, err.message || err);
-      }
-      try {
-        console.log(`[Import Job ${jobId}] Processing URL ${i + 1}/${urls.length}: ${url}`);
-        const recipeData = await scrapeRecipeWithRetries(url);
-        const persisted = await persistImportedRecipe({ url, recipeData });
-
-        if (persisted.needsImportReview) {
-          const reviewError = new Error('Import invalide: validation des champs échouée');
-          reviewError.code = 'IMPORT_VALIDATION_FAILED';
-          reviewError.details = {
-            validationType: persisted.validationType,
-            canForceIncomplete: Boolean(persisted.canForceIncomplete),
-            canImportWithoutContent: Boolean(persisted.canImportWithoutContent),
-            missingFields: persisted.missingFields,
-            fieldErrors: persisted.fieldErrors,
-            scrapedContent: persisted.scrapedContent,
-            importValidation: persisted.importValidation,
-          };
-          throw reviewError;
-        }
-
-        const recipe = persisted.recipe;
-        results.success += 1;
-        results.created.push({
-          id: recipe.id,
-          title: recipe.title,
-          source_url: recipe.source_url,
-          incomplete: recipe.incomplete,
-          requiresTitleVerification: recipe.requiresTitleVerification,
-          incoherentImport: recipe.incoherentImport,
-          restrictedDetail: recipe.restrictedDetail,
-        });
-
-        if (!recipe.confident) {
-          results.needsReview.push({
-            recipeId: recipe.id,
-            recipeTitle: recipe.title,
-            assignedCategory: (recipe.categories || []).map((c) => c?.name).filter(Boolean).join(', '),
-          });
-        }
-
-        console.log(`[Import Job ${jobId}] ✓ Success: ${recipe.title}`);
-      } catch (error) {
-        results.failed += 1;
-        const errorMsg = error.message || 'Import impossible';
-        results.errors.push({
-          url,
-          message: errorMsg,
-          code: error.code || null,
-          details: error.details || null,
-        });
-        console.error(`[Import Job ${jobId}] ✗ Failed: ${url} - ${errorMsg}`);
-      }
-
-      if ((i + 1) % 10 === 0) {
-        await supabase
-          .from('job_status')
-          .update({
-            processed: results.success + results.failed,
-            results,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', jobId);
-        console.log(`[Import Job ${jobId}] Progress: ${results.success + results.failed}/${urls.length}`);
-      }
-    }
-
-    await supabase
-      .from('job_status')
-      .update({
-        status: 'completed',
-        processed: results.success + results.failed,
-        results,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
-    
-    console.log(`[Import Job ${jobId}] Completed - Success: ${results.success}, Failed: ${results.failed}`);
-  } catch (error) {
-    console.error(`[Import Job ${jobId}] Fatal error:`, error);
-    await supabase
-      .from('job_status')
-      .update({
-        status: 'failed',
-        processed: results.success + results.failed,
-        results: {
-          ...results,
-          fatalError: error.message || 'Erreur inattendue',
-        },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
-  }
-}
-
-// POST /api/recipes/import-cancel
-router.post('/recipes/import-cancel', async (req, res) => {
-  try {
-    const jobId = (req.body && req.body.jobId) || null;
-    if (!jobId || !UUID_REGEX.test(jobId)) {
-      return res.status(400).json({ error: 'jobId manquant ou invalide', field: 'jobId' });
-    }
-
-    const { data: existing, error: fetchError } = await supabase
-      .from('job_status')
-      .select('id,status,processed,total,results')
-      .eq('id', jobId)
-      .maybeSingle();
-    if (fetchError) throw fetchError;
-    if (!existing) return res.status(404).json({ error: 'Job non trouve' });
-
-    if (existing.status === 'completed' || existing.status === 'failed' || existing.status === 'cancelled') {
-      return res.status(200).json({ id: jobId, status: existing.status });
-    }
-
-    const { error: updateError } = await supabase
-      .from('job_status')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-      .eq('id', jobId);
-    if (updateError) throw updateError;
-
-    return res.json({ id: jobId, status: 'cancelled' });
-  } catch (error) {
-    handleError(error, res, { endpoint: 'POST /api/recipes/import-cancel' });
-  }
-});
-
-function extractUrlsFromBody(body = {}) {
-  let rawUrls = [];
-
-  if (Array.isArray(body)) {
-    rawUrls = body;
-  } else if (Array.isArray(body.urls)) {
-    rawUrls = body.urls;
-  } else if (Array.isArray(body.links)) {
-    rawUrls = body.links;
-  } else if (typeof body.content === 'string') {
-    const matches = body.content.match(/https?:\/\/[^\s"'<>]+/g) || [];
-    rawUrls = matches;
-  }
-
-  return [...new Set(
-    rawUrls
-      .map((url) => String(url || '').trim())
-      .filter((url) => /^https?:\/\//i.test(url)),
-  )];
 }
 
 function normalizeRecipePayload(body = {}, { partial = false } = {}) {
@@ -970,6 +798,10 @@ router.get('/recipes', async (req, res) => {
       : (typeof req.query.season === 'string' ? req.query.season.trim() : '');
     const prepMax = Number.parseInt(req.query.prepMax, 10);
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'newest';
+    const page = parsePositiveInteger(req.query.page, 1);
+    const limit = parsePositiveInteger(req.query.limit, 24);
+    const summary = req.query.summary === 'true' || req.query.summary === true || req.query.summary === '1';
+    const paged = req.query.page !== undefined || req.query.limit !== undefined || summary;
 
     // Validation
     if (categoryId && !UUID_REGEX.test(categoryId)) {
@@ -1011,7 +843,7 @@ router.get('/recipes', async (req, res) => {
       }
     }
 
-    const selectString = `id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
+    const selectString = buildRecipeSelectString({ summary: paged, categoryId });
     let query = supabase.from('recipes').select(selectString);
 
     if (search) {
@@ -1038,6 +870,11 @@ router.get('/recipes', async (req, res) => {
       query = query.order('created_at', { ascending: false });
     }
 
+    if (paged) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit);
+    }
+
     const { data, error } = await query;
     if (error) {
       throw new APIError(
@@ -1050,6 +887,15 @@ router.get('/recipes', async (req, res) => {
     const visibleRecipes = hiddenIncompleteRecipeIds.length
       ? (data || []).filter((recipe) => !hiddenIncompleteRecipeIds.includes(recipe.id))
       : (data || []);
+
+    if (paged) {
+      return res.json({
+        items: visibleRecipes.slice(0, limit),
+        page,
+        limit,
+        hasMore: visibleRecipes.length > limit,
+      });
+    }
 
     res.json(visibleRecipes.map(mapRecipeWithCategories));
   } catch (error) {
@@ -1234,95 +1080,6 @@ router.post('/recipes/import', async (req, res) => {
         });
     }
 });
-
-async function createBulkImportJob(req, res, endpointLabel) {
-  try {
-    const urls = extractUrlsFromBody(req.body || {});
-    if (!urls.length) {
-      throw new APIError('Aucune URL détectée dans le fichier', 400, 'NO_URLS_FOUND');
-    }
-
-    const jobId = generateUUID();
-
-    const { data: job, error } = await supabase
-      .from('job_status')
-      .insert([{
-        id: jobId,
-        status: 'running',
-        total: urls.length,
-        processed: 0,
-        results: {
-          success: 0,
-          failed: 0,
-          errors: [],
-          created: [],
-          needsReview: [],
-        },
-      }])
-      .select('id, status, total, processed, results')
-      .single();
-
-    if (error) {
-      throw new APIError(
-        'Impossible de créer le job d\'import',
-        500,
-        'CREATE_JOB_ERROR',
-        { supabaseError: error.message }
-      );
-    }
-
-    processImport(job.id, urls).catch((importError) => {
-      console.error('Import error:', importError);
-    });
-
-    return res.status(202).json(job);
-  } catch (error) {
-    handleError(error, res, { endpoint: endpointLabel });
-  }
-}
-
-// POST /api/recipes/import-urls
-router.post('/recipes/import-urls', async (req, res) => {
-  return createBulkImportJob(req, res, 'POST /api/recipes/import-urls');
-});
-
-// POST /api/recipes/import-pinterest-export (legacy alias)
-router.post('/recipes/import-pinterest-export', async (req, res) => {
-  return createBulkImportJob(req, res, 'POST /api/recipes/import-pinterest-export');
-});
-
-// GET /api/recipes/import-status/:jobId
-router.get('/recipes/import-status/:jobId', validateUUID('jobId'), async (req, res) => {
-  try {
-    const { jobId } = req.params;
-
-    const { data, error } = await supabase
-      .from('job_status')
-      .select('status, total, processed, results')
-      .eq('id', jobId)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data) {
-      return res.status(404).json({ error: 'Job non trouve' });
-    }
-
-    const total = Number(data.total || 0);
-    const processed = Number(data.processed || 0);
-    const progressPercent = total > 0 ? Math.round((processed / total) * 100) : 0;
-
-    return res.json({
-      status: data.status,
-      total,
-      processed,
-      progressPercent,
-      results: data.results || {},
-    });
-  } catch (error) {
-    handleError(error, res, { endpoint: 'GET /api/recipes/import-status/:jobId', jobId: req.params.jobId });
-  }
-});
-
 
 // PUT /api/recipes/:id
 router.put('/recipes/:id', validateUUID('id'), async (req, res) => {
