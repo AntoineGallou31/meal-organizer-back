@@ -3,77 +3,191 @@ const supabase = require('../services/supabase');
 
 const SEED_CATEGORIES = [
   {
-    name: 'Desserts',
-    color: '#F9A8D4',
+    name: 'Agneau',
+    color: '#EF4444',
     is_default: false,
-    keywords: ['gâteau', 'gateau', 'cake', 'tarte', 'tartelette', 'muffin', 'brownie', 'cookie', 'biscuit', 'crêpe', 'crepe', 'pancake', 'waffle', 'gaufre', 'mousse', 'tiramisu', 'cheesecake', 'fondant', 'moelleux', 'clafoutis', 'flan', 'crème brûlée', 'panna cotta', 'sorbet', 'glace', 'macaron', 'madeleine', 'quatre-quarts', 'pudding', 'compote', 'confiture'],
+    keywords: ['agneau', 'lamb'],
   },
   {
-    name: 'Petit-déjeuner & Brunch',
+    name: 'Apéritif',
+    color: '#F59E0B',
+    is_default: false,
+    keywords: ['apéritif', 'apero', 'tapas', 'snack', 'entrée'],
+  },
+  {
+    name: 'Assiettes complètes',
+    color: '#10B981',
+    is_default: false,
+    keywords: [],
+  },
+  {
+    name: 'Sans catégorie',
+    color: '#9CA3AF',
+    is_default: true,
+    keywords: [],
+  },
+  {
+    name: 'Boeuf',
+    color: '#DC2626',
+    is_default: false,
+    keywords: ['boeuf', 'bœuf', 'beef', 'steak'],
+  },
+  {
+    name: 'Boulgour',
+    color: '#D97706',
+    is_default: false,
+    keywords: ['boulgour', 'bulgur'],
+  },
+  {
+    name: 'Brunch',
+    color: '#F59E0B',
+    is_default: false,
+    keywords: ['brunch', 'petit déjeuner', 'eggs', 'bacon'],
+  },
+  {
+    name: 'Burgers',
+    color: '#DC2626',
+    is_default: false,
+    keywords: ['burger', 'hamburger'],
+  },
+  {
+    name: 'Cakes',
+    color: '#EC4899',
+    is_default: false,
+    keywords: ['cake', 'gâteau', 'gateau'],
+  },
+  {
+    name: 'Clafoutis salés',
+    color: '#8B5CF6',
+    is_default: false,
+    keywords: ['clafoutis', 'salé'],
+  },
+  {
+    name: 'Cocktails',
+    color: '#06B6D4',
+    is_default: false,
+    keywords: ['cocktail', 'drink', 'alcool', 'aperitif'],
+  },
+  {
+    name: 'Croques Monsieur',
+    color: '#EA580C',
+    is_default: false,
+    keywords: ['croque', 'sandwich'],
+  },
+  {
+    name: 'Dahl et curry',
+    color: '#F97316',
+    is_default: false,
+    keywords: ['dahl', 'dal', 'curry', 'spice'],
+  },
+  {
+    name: 'Desserts',
+    color: '#EC4899',
+    is_default: false,
+    keywords: ['gâteau', 'gateau', 'tarte', 'dessert', 'sucré'],
+  },
+  {
+    name: 'Gnocchis',
+    color: '#F59E0B',
+    is_default: false,
+    keywords: ['gnocchi', 'gnocchis'],
+  },
+  {
+    name: 'Lentilles',
+    color: '#DC2626',
+    is_default: false,
+    keywords: ['lentille', 'lentil', 'legume'],
+  },
+  {
+    name: 'Légumes',
+    color: '#22C55E',
+    is_default: false,
+    keywords: ['légume', 'legume', 'vegetable', 'veggie'],
+  },
+  {
+    name: 'Oeufs',
     color: '#FCD34D',
     is_default: false,
-    keywords: ['granola', 'muesli', 'porridge', 'overnight oats', 'smoothie', 'pain perdu', 'french toast', 'eggs benedict', 'avocado toast', 'tartine', 'breakfast', 'brunch', 'acai bowl'],
+    keywords: ['oeuf', 'œuf', 'egg', 'eggs'],
   },
   {
-    name: 'Soupes & Veloutés',
-    color: '#6EE7B7',
+    name: 'Omelettes',
+    color: '#FCD34D',
     is_default: false,
-    keywords: ['soupe', 'velouté', 'velout', 'bouillon', 'potage', 'minestrone', 'gaspacho', 'consommé', 'bisque', 'ramen', 'pho', 'miso', 'chorba', 'harira'],
+    keywords: ['omelette', 'scrambled'],
+  },
+  {
+    name: 'Poissons',
+    color: '#06B6D4',
+    is_default: false,
+    keywords: ['poisson', 'fish', 'saumon', 'trout', 'tuna'],
+  },
+  {
+    name: 'Poulet',
+    color: '#F59E0B',
+    is_default: false,
+    keywords: ['poulet', 'chicken', 'poultry'],
+  },
+  {
+    name: 'Pâtes',
+    color: '#D4A574',
+    is_default: false,
+    keywords: ['pâtes', 'pasta', 'spaghetti', 'tagliatelle', 'fusilli'],
+  },
+  {
+    name: 'Quiches et tartes',
+    color: '#D4A574',
+    is_default: false,
+    keywords: ['quiche', 'tarte', 'tartelette', 'pie'],
+  },
+  {
+    name: 'Quinoa',
+    color: '#10B981',
+    is_default: false,
+    keywords: ['quinoa', 'quinotto'],
+  },
+  {
+    name: 'Riz',
+    color: '#D4A574',
+    is_default: false,
+    keywords: ['riz', 'rice', 'risotto'],
   },
   {
     name: 'Salades',
-    color: '#86EFAC',
+    color: '#22C55E',
     is_default: false,
-    keywords: ['salade', 'taboulé', 'taboule', 'coleslaw', 'caesar', 'niçoise', 'fattoush', 'waldorf', 'vinaigrette', 'crudités'],
+    keywords: ['salade', 'salad', 'crudités'],
   },
   {
-    name: 'Pâtes & Riz',
-    color: '#FDE68A',
+    name: 'Sarrasin',
+    color: '#D4A574',
     is_default: false,
-    keywords: ['pâtes', 'pasta', 'spaghetti', 'linguine', 'penne', 'tagliatelle', 'lasagne', 'ravioli', 'gnocchi', 'riz', 'risotto', 'quinotto', 'nouilles', 'coquillettes', 'macaroni', 'fusilli'],
+    keywords: ['sarrasin', 'buckwheat'],
   },
   {
-    name: 'Poissons & Fruits de mer',
-    color: '#BAE6FD',
+    name: 'Semoule',
+    color: '#D4A574',
     is_default: false,
-    keywords: ['saumon', 'thon', 'cabillaud', 'dorade', 'bar', 'merlu', 'truite', 'crevette', 'gambas', 'homard', 'crabe', 'moule', 'coquille saint-jacques', 'seiche', 'poulpe', 'calamar', 'fruits de mer', 'bouillabaisse'],
+    keywords: ['semoule', 'couscous', 'semolina'],
   },
   {
-    name: 'Viandes',
-    color: '#FCA5A5',
+    name: 'Soupes',
+    color: '#06B6D4',
     is_default: false,
-    keywords: ['poulet', 'chicken', 'dinde', 'canard', 'bœuf', 'boeuf', 'veau', 'porc', 'agneau', 'côte', 'steak', 'burger', 'boulette', 'saucisse', 'merguez', 'chorizo', 'lardons', 'bacon', 'jambon', 'rôti', 'brochette', 'kebab', 'tajine', 'blanquette', 'coq au vin', 'cassoulet'],
+    keywords: ['soupe', 'soup', 'velouté', 'potage'],
   },
   {
-    name: 'Végétarien',
-    color: '#A7F3D0',
+    name: 'Veau',
+    color: '#DC2626',
     is_default: false,
-    keywords: ['tofu', 'tempeh', 'seitan', 'lentille', 'pois chiche', 'falafel', 'houmous', 'hummus', 'dahl', 'dal', 'veggie', 'végétarien', 'vegan', 'végétalien', 'buddha bowl'],
-  },
-  {
-    name: 'Snacks & Apéro',
-    color: '#C4B5FD',
-    is_default: false,
-    keywords: ['apéro', 'apero', 'tapas', 'bruschetta', 'dip', 'chips', 'wraps', 'nems', 'samossa', 'mini', 'bouchée', 'verrine', 'guacamole', 'tzatziki', 'rillettes', 'amuse-bouche'],
-  },
-  {
-    name: 'Sauces & Condiments',
-    color: '#FED7AA',
-    is_default: false,
-    keywords: ['sauce', 'marinade', 'pesto', 'aïoli', 'mayonnaise', 'ketchup', 'tapenade', 'salsa', 'chutney', 'coulis', 'béchamel', 'hollandaise', 'vinaigrette', 'condiment'],
-  },
-  {
-    name: 'Plats principaux',
-    color: '#93C5FD',
-    is_default: true,
-    keywords: [],
+    keywords: ['veau', 'veal'],
   },
 ];
 
 async function seed() {
   const { data: existing, error: existingError } = await supabase
     .from('categories')
-    .select('name');
+    .select('id, name, is_default');
 
   if (existingError) {
     throw existingError;
@@ -82,20 +196,58 @@ async function seed() {
   const existingNames = new Set((existing || []).map((row) => String(row.name || '').toLowerCase()));
   const toInsert = SEED_CATEGORIES.filter((category) => !existingNames.has(category.name.toLowerCase()));
 
-  if (!toInsert.length) {
+  if (toInsert.length) {
+    const { error: insertError } = await supabase
+      .from('categories')
+      .insert(toInsert);
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    console.log(`${toInsert.length} categories inserees.`);
+  } else {
     console.log('Aucune nouvelle categorie a inserer.');
-    return;
   }
 
-  const { error: insertError } = await supabase
+  const { data: refreshed, error: refreshedError } = await supabase
     .from('categories')
-    .insert(toInsert);
+    .select('id, name, is_default');
 
-  if (insertError) {
-    throw insertError;
+  if (refreshedError) {
+    throw refreshedError;
   }
 
-  console.log(`${toInsert.length} categories inserees.`);
+  const defaultCategory = (refreshed || []).find(
+    (category) => String(category.name || '').toLowerCase() === 'sans catégorie',
+  );
+
+  if (!defaultCategory) {
+    throw new Error('La categorie par defaut "Sans catégorie" est introuvable apres le seed.');
+  }
+
+  const { error: unsetDefaultError } = await supabase
+    .from('categories')
+    .update({ is_default: false })
+    .neq('id', defaultCategory.id)
+    .eq('is_default', true);
+
+  if (unsetDefaultError) {
+    throw unsetDefaultError;
+  }
+
+  if (!defaultCategory.is_default) {
+    const { error: setDefaultError } = await supabase
+      .from('categories')
+      .update({ is_default: true })
+      .eq('id', defaultCategory.id);
+
+    if (setDefaultError) {
+      throw setDefaultError;
+    }
+  }
+
+  console.log('Categorie par defaut definie: Sans catégorie.');
 }
 
 seed()

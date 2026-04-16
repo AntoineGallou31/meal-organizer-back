@@ -94,16 +94,38 @@ function normalizeImportedText(value) {
 }
 
 function normalizeImportedRecipeData(recipeData = {}) {
+  const rawPrepTime = recipeData.prepTime ?? recipeData.prep_time ?? recipeData.duration;
+  const parsedPrepTime = rawPrepTime == null || rawPrepTime === ''
+    ? null
+    : Number.parseInt(String(rawPrepTime).replace(/[^\d]/g, ''), 10);
+  const rawConfidence = recipeData.confidence;
+  const parsedConfidence = rawConfidence == null || rawConfidence === ''
+    ? null
+    : Number(rawConfidence);
+
   return {
     ...recipeData,
     title: normalizeImportedText(recipeData.title),
+    imageUrl: normalizeImportedText(recipeData.imageUrl ?? recipeData.image),
     ingredients: Array.isArray(recipeData.ingredients)
       ? recipeData.ingredients.map((line) => normalizeImportedText(String(line || '')))
       : recipeData.ingredients,
     steps: Array.isArray(recipeData.steps)
       ? recipeData.steps.map((line) => normalizeImportedText(String(line || '')))
-      : recipeData.steps,
+      : (Array.isArray(recipeData.instructions)
+        ? recipeData.instructions.map((line) => normalizeImportedText(String(line || '')))
+        : recipeData.steps),
+    prepTime: Number.isFinite(parsedPrepTime) ? parsedPrepTime : null,
+    months: Array.isArray(recipeData.months)
+      ? [...new Set(recipeData.months.map((month) => String(month || '').trim()).filter(Boolean))]
+      : [],
+    confidence: Number.isFinite(parsedConfidence) ? parsedConfidence : null,
   };
+}
+
+function pickPrimaryCategory(categories = []) {
+  if (!Array.isArray(categories) || categories.length === 0) return null;
+  return categories.find((category) => category && !category.is_default) || categories[0] || null;
 }
 
 function normalizeForComparison(value) {
@@ -504,6 +526,8 @@ async function persistImportedRecipe({
     ingredients: Array.isArray(preparedRecipeData.ingredients) ? preparedRecipeData.ingredients : [],
     steps: Array.isArray(preparedRecipeData.steps) ? preparedRecipeData.steps : [],
     source_url: preparedRecipeData.sourceUrl || url,
+    months: Array.isArray(preparedRecipeData.months) ? preparedRecipeData.months : [],
+    confidence: Number.isFinite(preparedRecipeData.confidence) ? preparedRecipeData.confidence : null,
   };
 
   const { data: existingRecipe, error: duplicateCheckError } = await supabase
@@ -544,6 +568,14 @@ async function persistImportedRecipe({
     const toCompleteCategoryId = await getOrCreateCategory(ALERT_CATEGORY_COMPLETE.name, ALERT_CATEGORY_COMPLETE.color);
     assignedCategoryIds.add(toCompleteCategoryId);
     confident = false;
+  } else if (Array.isArray(preparedRecipeData.categories) && preparedRecipeData.categories.length > 0) {
+    for (const categoryName of preparedRecipeData.categories) {
+      const categoryId = await getOrCreateCategory(categoryName);
+      if (categoryId) assignedCategoryIds.add(categoryId);
+    }
+  } else if (typeof preparedRecipeData.category === 'string' && preparedRecipeData.category.trim()) {
+    const categoryId = await getOrCreateCategory(preparedRecipeData.category.trim());
+    if (categoryId) assignedCategoryIds.add(categoryId);
   }
 
   if (!assignedCategoryIds.size) {
@@ -591,11 +623,15 @@ function normalizeCategoryIds(categoryIds) {
 
 function mapRecipeWithCategories(recipe) {
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
-  const seasons = Array.isArray(recipe.seasons) ? recipe.seasons : [];
+  const instructions = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const months = Array.isArray(recipe.months)
+    ? recipe.months
+    : (Array.isArray(recipe.seasons) ? recipe.seasons : []);
+  const confidence = Number.isFinite(Number(recipe.confidence)) ? Number(recipe.confidence) : null;
   const categories = (recipe.recipe_categories || [])
     .map((rc) => rc.categories)
     .filter(Boolean);
+  const primaryCategory = pickPrimaryCategory(categories);
 
   const hasToCompleteCategory = categories.some((category) => {
     const name = normalizeTextForMatch(category?.name);
@@ -605,7 +641,7 @@ function mapRecipeWithCategories(recipe) {
   const importValidation = evaluateRecipeCoherence({
     title: recipe.title,
     ingredients,
-    steps,
+    steps: instructions,
   });
   const incoherentImport = !importValidation.isCoherent;
   const restrictedDetail = Boolean(recipe.source_url) && hasToCompleteCategory;
@@ -613,26 +649,37 @@ function mapRecipeWithCategories(recipe) {
   return {
     id: recipe.id,
     title: recipe.title,
-    image_url: recipe.image_url,
-    prep_time: recipe.prep_time,
-    servings: recipe.servings,
-    source_url: recipe.source_url,
-    created_at: recipe.created_at,
-    ingredients,
-    steps,
-    seasons,
-    external_only: Boolean(recipe.source_url) && ingredients.length === 0 && steps.length === 0,
-    incoherent_import: incoherentImport,
-    restricted_detail: restrictedDetail,
-    import_validation: importValidation,
+    image: recipe.image_url ?? null,
+    imageUrl: recipe.image_url ?? null,
+    category: primaryCategory?.name ?? null,
     categories,
+    months,
+    ingredients,
+    instructions,
+    steps: instructions,
+    duration: recipe.prep_time ?? null,
+    prepTime: recipe.prep_time ?? null,
+    servings: recipe.servings,
+    sourceUrl: recipe.source_url,
+    source_url: recipe.source_url,
+    createdAt: recipe.created_at,
+    created_at: recipe.created_at,
+    confidence,
+    externalOnly: Boolean(recipe.source_url) && ingredients.length === 0 && instructions.length === 0,
+    external_only: Boolean(recipe.source_url) && ingredients.length === 0 && instructions.length === 0,
+    incoherentImport,
+    incoherent_import: incoherentImport,
+    restrictedDetail,
+    restricted_detail: restrictedDetail,
+    importValidation,
+    import_validation: importValidation,
   };
 }
 
 async function fetchRecipeWithCategoriesById(recipeId) {
   const { data, error } = await supabase
     .from('recipes')
-    .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,created_at,recipe_categories(categories(id,name,color))')
+    .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories(categories(id,name,color))')
     .eq('id', recipeId)
     .maybeSingle();
 
@@ -841,22 +888,40 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
   const ingredients = Array.isArray(body.ingredients)
     ? body.ingredients.map((item) => String(item).trim()).filter(Boolean)
     : undefined;
-  const steps = Array.isArray(body.steps)
-    ? body.steps.map((item) => String(item).trim()).filter(Boolean)
+  const rawSteps = Array.isArray(body.steps)
+    ? body.steps
+    : (Array.isArray(body.instructions) ? body.instructions : undefined);
+  const steps = Array.isArray(rawSteps)
+    ? rawSteps.map((item) => String(item).trim()).filter(Boolean)
     : undefined;
-  const seasons = Array.isArray(body.seasons)
-    ? [...new Set(body.seasons.map((s) => String(s).trim().toLowerCase()).filter(Boolean))]
+  const monthsInput = Array.isArray(body.months)
+    ? body.months
+    : (Array.isArray(body.seasons) ? body.seasons : undefined);
+  const months = Array.isArray(monthsInput)
+    ? [...new Set(monthsInput.map((m) => String(m).trim()).filter(Boolean))]
     : undefined;
+  const prepTimeInput = body.prepTime ?? body.prep_time ?? body.duration;
+  const prepTimeParsed = prepTimeInput === undefined ? undefined : Number(prepTimeInput);
+  const prepTimeValue = prepTimeParsed === undefined
+    ? undefined
+    : (prepTimeInput === null ? null : (Number.isFinite(prepTimeParsed) ? prepTimeParsed : undefined));
+  const confidenceInput = body.confidence;
+  const confidenceParsed = confidenceInput === undefined ? undefined : Number(confidenceInput);
+  const confidence = confidenceInput === undefined
+    ? undefined
+    : (confidenceInput === null ? null : (Number.isFinite(confidenceParsed) ? confidenceParsed : undefined));
+  const imageValue = body.image ?? body.imageUrl ?? body.image_url ?? undefined;
 
   const payload = {
     title,
-    image_url: body.imageUrl ?? body.image_url ?? undefined,
-    prep_time: body.prepTime ?? body.prep_time ?? undefined,
+    image_url: imageValue,
+    prep_time: prepTimeValue,
     servings: body.servings ?? undefined,
     ingredients,
     steps,
     source_url: body.sourceUrl ?? body.source_url ?? undefined,
-    seasons,
+    months,
+    confidence,
   };
 
   if (partial) {
@@ -900,7 +965,9 @@ router.get('/recipes', async (req, res) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const categoryId = typeof req.query.categoryId === 'string' ? req.query.categoryId.trim() : '';
     const ingredient = typeof req.query.ingredient === 'string' ? req.query.ingredient.trim() : '';
-    const season = typeof req.query.season === 'string' ? req.query.season.trim().toLowerCase() : '';
+    const month = typeof req.query.month === 'string'
+      ? req.query.month.trim()
+      : (typeof req.query.season === 'string' ? req.query.season.trim() : '');
     const prepMax = Number.parseInt(req.query.prepMax, 10);
     const sort = typeof req.query.sort === 'string' ? req.query.sort : 'newest';
 
@@ -908,16 +975,12 @@ router.get('/recipes', async (req, res) => {
     if (categoryId && !UUID_REGEX.test(categoryId)) {
       throw new APIError('L\'ID de catégorie fourni n\'est pas au format UUID valide', 400, 'INVALID_UUID');
     }
-    if (season && !Object.keys(SEASON_INGREDIENTS).includes(season)) {
-      throw new APIError(`La saison "${season}" n\'existe pas. Saisons disponibles: ${Object.keys(SEASON_INGREDIENTS).join(', ')}`, 400, 'INVALID_SEASON');
-    }
     if (req.query.prepMax !== undefined && Number.isNaN(prepMax)) {
       throw new APIError('Le paramètre prepMax doit être un nombre entier', 400, 'INVALID_PREP_MAX');
     }
 
     const ingredientTerms = [];
     if (ingredient) ingredientTerms.push(ingredient);
-    if (season) ingredientTerms.push(...SEASON_INGREDIENTS[season]);
 
     let ingredientFilteredIds = null;
     if (ingredientTerms.length) {
@@ -948,7 +1011,7 @@ router.get('/recipes', async (req, res) => {
       }
     }
 
-    const selectString = `id,title,image_url,prep_time,servings,ingredients,steps,source_url,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
+    const selectString = `id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
     let query = supabase.from('recipes').select(selectString);
 
     if (search) {
@@ -956,6 +1019,9 @@ router.get('/recipes', async (req, res) => {
     }
     if (categoryId) {
       query = query.eq('recipe_categories.category_id', categoryId);
+    }
+    if (month) {
+      query = query.cs('months', [month]);
     }
     if (!Number.isNaN(prepMax)) {
       query = query.lte('prep_time', prepMax);
@@ -1009,7 +1075,7 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
     if (recipeCategoryIds.length) {
       const { data: similar, error: similarError } = await supabase
         .from('recipes')
-        .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
+        .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
         .neq('id', req.params.id)
         .in('recipe_categories.category_id', recipeCategoryIds)
         .order('created_at', { ascending: false })
@@ -1051,6 +1117,10 @@ router.post('/recipes', async (req, res) => {
     if (validationError) return res.status(400).json(validationError);
 
     const categoryIds = req.body?.categoryIds;
+    const categoryName = typeof req.body?.category === 'string' ? req.body.category.trim() : '';
+    const categoryNames = Array.isArray(req.body?.categories)
+      ? req.body.categories.map((item) => String(item).trim()).filter(Boolean)
+      : [];
     if (categoryIds !== undefined && !Array.isArray(categoryIds)) {
       return res.status(400).json({ error: 'categoryIds doit etre un tableau de UUID' });
     }
@@ -1073,6 +1143,16 @@ router.post('/recipes', async (req, res) => {
 
     if (categoryIds !== undefined) {
       await replaceCategoriesForRecipe(data.id, normalizedCategoryIds);
+    } else if (categoryNames.length > 0) {
+      const ids = [];
+      for (const name of categoryNames) {
+        const categoryId = await getOrCreateCategory(name);
+        if (categoryId) ids.push(categoryId);
+      }
+      await replaceCategoriesForRecipe(data.id, ids);
+    } else if (categoryName) {
+      const categoryId = await getOrCreateCategory(categoryName);
+      await replaceCategoriesForRecipe(data.id, categoryId ? [categoryId] : []);
     } else {
       const detection = await detectCategory(payload.title, payload.ingredients);
       await assignCategoryToRecipe(data.id, detection.id);
