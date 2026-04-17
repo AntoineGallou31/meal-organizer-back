@@ -46,6 +46,33 @@ const isMissingColumnError = (error) => {
     );
 };
 
+const MEAL_PLAN_RECIPE_SELECT_CANDIDATES = [
+    '*, recipes(id,title,image_url,prep_time,source_url,incoherent_import,restricted_detail,import_validation,recipe_categories(category_id,categories(id,name,color)))',
+    '*, recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))',
+    '*, recipes(id,title,image_url,prep_time,source_url)',
+];
+
+const fetchMealPlansWithSchemaFallback = async (weekDays) => {
+    for (let i = 0; i < MEAL_PLAN_RECIPE_SELECT_CANDIDATES.length; i += 1) {
+        const selectClause = MEAL_PLAN_RECIPE_SELECT_CANDIDATES[i];
+        const { data, error } = await supabase
+            .from('meal_plan')
+            .select(selectClause)
+            .in('date', weekDays);
+
+        if (!error) {
+            return data || [];
+        }
+
+        const canRetry = i < MEAL_PLAN_RECIPE_SELECT_CANDIDATES.length - 1;
+        if (!isMissingColumnError(error) || !canRetry) {
+            throw error;
+        }
+    }
+
+    return [];
+};
+
 // GET /api/meal-plan?week=YYYY-Www
 router.get('/meal-plan', async (req, res) => {
     try {
@@ -60,12 +87,7 @@ router.get('/meal-plan', async (req, res) => {
         }
 
         const weekDays = getWeekDays(week);
-        const { data: mealPlans, error } = await supabase
-            .from('meal_plan')
-            .select('*, recipes(id,title,image_url,prep_time,source_url,incoherent_import,restricted_detail,import_validation,recipe_categories(category_id,categories(id,name,color)))')
-            .in('date', weekDays);
-
-        if (error) throw error;
+        const mealPlans = await fetchMealPlansWithSchemaFallback(weekDays);
 
         const weekSchedule = weekDays.map(date => {
             const lunch = mealPlans.find(p => p.date === date && p.slot === 'lunch');
