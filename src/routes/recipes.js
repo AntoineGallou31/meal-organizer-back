@@ -853,7 +853,7 @@ router.get('/recipes', async (req, res) => {
       query = query.eq('recipe_categories.category_id', categoryId);
     }
     if (month) {
-      query = query.cs('months', [month]);
+      query = query.contains('months', [month]);
     }
     if (!Number.isNaN(prepMax)) {
       query = query.lte('prep_time', prepMax);
