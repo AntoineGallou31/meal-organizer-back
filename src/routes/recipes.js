@@ -1111,7 +1111,7 @@ router.put('/recipes/:id', validateUUID('id'), async (req, res) => {
 router.delete('/recipes/:id', validateUUID('id'), async (req, res) => {
   try {
     // In a real app, you might want to set ON DELETE SET NULL or CASCADE in the DB
-    await supabase.from('meal_plan').delete().eq('recipe_id', req.params.id);
+    await supabase.from('meal_plan_items').delete().eq('recipe_id', req.params.id);
     
     const { data, error } = await supabase
       .from('recipes')

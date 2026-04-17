@@ -3,7 +3,8 @@ const supabase = require('../services/supabase');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
-const MANUAL_TEXT_COLUMNS = ['manual_text', 'manual_note', 'custom_text', 'text'];
+const SLOT_VALUES = ['lunch', 'dinner'];
+const ITEM_TYPES = ['recipe', 'note'];
 
 const getWeekDays = (weekString) => {
     const [year, weekNum] = weekString.split('-W').map(Number);
@@ -25,18 +26,6 @@ const getDayName = (date, locale = 'fr-FR') => {
     return new Date(date).toLocaleDateString(locale, { weekday: 'long' });
 }
 
-const extractManualText = (mealPlanRow) => {
-    if (!mealPlanRow) {
-        return null;
-    }
-
-    const value = MANUAL_TEXT_COLUMNS
-        .map((column) => mealPlanRow[column])
-        .find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0);
-
-    return value ?? null;
-};
-
 const isMissingColumnError = (error) => {
     const message = (error?.message ?? '').toLowerCase();
     return message.includes('column') && (
@@ -46,17 +35,43 @@ const isMissingColumnError = (error) => {
     );
 };
 
-const MEAL_PLAN_RECIPE_SELECT_CANDIDATES = [
-    '*, recipes(id,title,image_url,prep_time,source_url,incoherent_import,restricted_detail,import_validation,recipe_categories(category_id,categories(id,name,color)))',
-    '*, recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))',
-    '*, recipes(id,title,image_url,prep_time,source_url)',
+const MEAL_PLAN_ITEM_SELECT_CANDIDATES = [
+    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,incoherent_import,restricted_detail,import_validation,recipe_categories(category_id,categories(id,name,color)))',
+    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))',
+    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url)',
 ];
 
-const fetchMealPlansWithSchemaFallback = async (weekDays) => {
-    for (let i = 0; i < MEAL_PLAN_RECIPE_SELECT_CANDIDATES.length; i += 1) {
-        const selectClause = MEAL_PLAN_RECIPE_SELECT_CANDIDATES[i];
+const toMealPlanItemResponse = (row) => ({
+    id: row.id,
+    date: row.date,
+    slot: row.slot,
+    position: Number.isInteger(row.position) ? row.position : null,
+    type: row.type,
+    recipeId: row.recipe_id ?? null,
+    note: row.note ?? null,
+    recipe: row.recipes ?? null,
+    createdAt: row.created_at ?? null,
+});
+
+const sortItems = (items) => {
+    return [...items].sort((a, b) => {
+        const positionA = Number.isInteger(a.position) ? a.position : Number.MAX_SAFE_INTEGER;
+        const positionB = Number.isInteger(b.position) ? b.position : Number.MAX_SAFE_INTEGER;
+        if (positionA !== positionB) {
+            return positionA - positionB;
+        }
+
+        const createdA = a.createdAt ? Date.parse(a.createdAt) : 0;
+        const createdB = b.createdAt ? Date.parse(b.createdAt) : 0;
+        return createdA - createdB;
+    });
+};
+
+const fetchMealPlanItemsWithSchemaFallback = async (weekDays) => {
+    for (let i = 0; i < MEAL_PLAN_ITEM_SELECT_CANDIDATES.length; i += 1) {
+        const selectClause = MEAL_PLAN_ITEM_SELECT_CANDIDATES[i];
         const { data, error } = await supabase
-            .from('meal_plan')
+            .from('meal_plan_items')
             .select(selectClause)
             .in('date', weekDays);
 
@@ -64,7 +79,7 @@ const fetchMealPlansWithSchemaFallback = async (weekDays) => {
             return data || [];
         }
 
-        const canRetry = i < MEAL_PLAN_RECIPE_SELECT_CANDIDATES.length - 1;
+        const canRetry = i < MEAL_PLAN_ITEM_SELECT_CANDIDATES.length - 1;
         if (!isMissingColumnError(error) || !canRetry) {
             throw error;
         }
@@ -87,18 +102,19 @@ router.get('/meal-plan', async (req, res) => {
         }
 
         const weekDays = getWeekDays(week);
-        const mealPlans = await fetchMealPlansWithSchemaFallback(weekDays);
+        const mealPlanItems = (await fetchMealPlanItemsWithSchemaFallback(weekDays))
+            .map(toMealPlanItemResponse);
 
         const weekSchedule = weekDays.map(date => {
-            const lunch = mealPlans.find(p => p.date === date && p.slot === 'lunch');
-            const dinner = mealPlans.find(p => p.date === date && p.slot === 'dinner');
+            const dayItems = mealPlanItems.filter((item) => item.date === date);
+            const lunchItems = sortItems(dayItems.filter((item) => item.slot === 'lunch'));
+            const dinnerItems = sortItems(dayItems.filter((item) => item.slot === 'dinner'));
+
             return {
                 date,
                 dayName: getDayName(date),
-                lunch: lunch ? lunch.recipes : null,
-                lunchManualText: extractManualText(lunch),
-                dinner: dinner ? dinner.recipes : null,
-                dinnerManualText: extractManualText(dinner),
+                lunchItems,
+                dinnerItems,
             };
         });
 
@@ -108,72 +124,106 @@ router.get('/meal-plan', async (req, res) => {
     }
 });
 
-// POST /api/meal-plan
-router.post('/meal-plan', async (req, res) => {
+// POST /api/meal-plan/items
+router.post('/meal-plan/items', async (req, res) => {
     try {
-        const { date, slot, recipeId, manualText } = req.body;
-        const hasRecipeId = recipeId !== undefined && recipeId !== null && String(recipeId).trim() !== '';
-        const normalizedManualText = typeof manualText === 'string' ? manualText.trim() : '';
-        const hasManualText = normalizedManualText.length > 0;
+        const { date, slot, type, recipeId, note, position } = req.body;
 
-        if (!date || !slot) {
-            return res.status(400).json({ error: 'date et slot sont requis' });
+        if (!date || !slot || !type) {
+            return res.status(400).json({ error: 'date, slot et type sont requis' });
         }
-        if ((hasRecipeId && hasManualText) || (!hasRecipeId && !hasManualText)) {
-            return res.status(400).json({ error: 'Fournir soit recipeId, soit manualText' });
-        }
-        if (slot !== 'lunch' && slot !== 'dinner') {
+
+        if (!SLOT_VALUES.includes(slot)) {
             return res.status(400).json({ error: 'slot doit être "lunch" ou "dinner"' });
         }
 
-        const basePayload = { date, slot };
-
-        if (hasRecipeId) {
-            const recipePayload = { ...basePayload, recipe_id: recipeId };
-            const candidateColumns = [...MANUAL_TEXT_COLUMNS, null];
-
-            for (const column of candidateColumns) {
-                const payload = column
-                    ? { ...recipePayload, [column]: null }
-                    : recipePayload;
-                const { data, error } = await supabase
-                    .from('meal_plan')
-                    .upsert(payload, { onConflict: 'date, slot' })
-                    .select('*, recipes(*)')
-                    .single();
-
-                if (!error) {
-                    return res.status(201).json(data);
-                }
-
-                if (!isMissingColumnError(error) || !column) {
-                    throw error;
-                }
-            }
+        if (!ITEM_TYPES.includes(type)) {
+            return res.status(400).json({ error: 'type doit être "recipe" ou "note"' });
         }
 
-        for (const column of MANUAL_TEXT_COLUMNS) {
-            const payload = { ...basePayload, recipe_id: null, [column]: normalizedManualText };
-            const { data, error } = await supabase
-                .from('meal_plan')
-                .upsert(payload, { onConflict: 'date, slot' })
-                .select('*, recipes(*)')
-                .single();
-
-            if (!error) {
-                return res.status(201).json(data);
-            }
-
-            if (!isMissingColumnError(error)) {
-                throw error;
-            }
+        const normalizedPosition = position === undefined || position === null || String(position).trim() === ''
+            ? null
+            : Number(position);
+        if (normalizedPosition !== null && (!Number.isInteger(normalizedPosition) || normalizedPosition < 0)) {
+            return res.status(400).json({ error: 'position doit être un entier >= 0' });
         }
 
-        return res.status(500).json({
-            error: 'Aucune colonne texte compatible trouvée dans meal_plan (manual_text/manual_note/custom_text/text)',
-        });
+        let payload;
+
+        if (type === 'recipe') {
+            const hasRecipeId = recipeId !== undefined && recipeId !== null && String(recipeId).trim() !== '';
+            if (!hasRecipeId) {
+                return res.status(400).json({ error: 'recipeId est requis pour le type "recipe"' });
+            }
+
+            payload = {
+                date,
+                slot,
+                type,
+                position: normalizedPosition,
+                recipe_id: recipeId,
+                note: null,
+            };
+        } else {
+            const normalizedNote = typeof note === 'string' ? note.trim() : '';
+            if (!normalizedNote) {
+                return res.status(400).json({ error: 'note est requis pour le type "note"' });
+            }
+
+            payload = {
+                date,
+                slot,
+                type,
+                position: normalizedPosition,
+                recipe_id: null,
+                note: normalizedNote,
+            };
+        }
+
+        const { data, error } = await supabase
+            .from('meal_plan_items')
+            .insert(payload)
+            .select('id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))')
+            .single();
+
+        if (error) {
+            throw error;
+        }
+
+        return res.status(201).json(toMealPlanItemResponse(data));
     } catch (error) {
-        handleError(error, res, { endpoint: 'POST /api/meal-plan', date: req.body?.date, slot: req.body?.slot });
+        handleError(error, res, {
+            endpoint: 'POST /api/meal-plan/items',
+            date: req.body?.date,
+            slot: req.body?.slot,
+            type: req.body?.type,
+        });
+    }
+});
+
+// DELETE /api/meal-plan/items/:id
+router.delete('/meal-plan/items/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const { data, error } = await supabase
+            .from('meal_plan_items')
+            .delete()
+            .eq('id', id)
+            .select('id')
+            .maybeSingle();
+
+        if (error) throw error;
+        if (!data) {
+            throw new APIError('Item de planning introuvable', 404, 'MEAL_PLAN_ITEM_NOT_FOUND');
+        }
+
+        res.status(204).send();
+    } catch (error) {
+        handleError(error, res, {
+            endpoint: 'DELETE /api/meal-plan/items/:id',
+            itemId: req.params.id,
+        });
     }
 });
 
@@ -181,16 +231,17 @@ router.post('/meal-plan', async (req, res) => {
 router.delete('/meal-plan/:date/:slot', async (req, res) => {
     try {
         const { date, slot } = req.params;
-        const { data, error } = await supabase
-            .from('meal_plan')
+
+        if (!SLOT_VALUES.includes(slot)) {
+            return res.status(400).json({ error: 'slot doit être "lunch" ou "dinner"' });
+        }
+
+        const { error } = await supabase
+            .from('meal_plan_items')
             .delete()
             .match({ date, slot });
 
         if (error) throw error;
-        
-        // Supabase delete returns an empty data array if nothing was deleted.
-        // There is no simple way to check for 404 without another query.
-        // So we'll just return 204.
 
         res.status(204).send();
     } catch (error) {
