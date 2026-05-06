@@ -227,6 +227,62 @@ router.delete('/meal-plan/items/:id', async (req, res) => {
     }
 });
 
+// PUT /api/meal-plan/items/:id
+router.put('/meal-plan/items/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { note, recipeId, position, type } = req.body;
+
+        if (!id) {
+            return res.status(400).json({ error: 'id est requis' });
+        }
+
+        const updates = {};
+
+        if (type !== undefined) {
+            if (!ITEM_TYPES.includes(type)) {
+                return res.status(400).json({ error: 'type invalide' });
+            }
+            updates.type = type;
+        }
+
+        if (position !== undefined) {
+            const normalizedPosition = position === null || position === '' ? null : Number(position);
+            if (normalizedPosition !== null && (!Number.isInteger(normalizedPosition) || normalizedPosition < 0)) {
+                return res.status(400).json({ error: 'position doit être un entier >= 0' });
+            }
+            updates.position = normalizedPosition;
+        }
+
+        if (recipeId !== undefined) {
+            updates.recipe_id = recipeId === null ? null : recipeId;
+        }
+
+        if (note !== undefined) {
+            updates.note = note === null ? null : String(note).trim();
+        }
+
+        const { data, error } = await supabase
+            .from('meal_plan_items')
+            .update(updates)
+            .eq('id', id)
+            .select('id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))')
+            .maybeSingle();
+
+        if (error) throw error;
+        if (!data) {
+            throw new APIError('Item de planning introuvable', 404, 'MEAL_PLAN_ITEM_NOT_FOUND');
+        }
+
+        return res.json(toMealPlanItemResponse(data));
+    } catch (error) {
+        handleError(error, res, {
+            endpoint: 'PUT /api/meal-plan/items/:id',
+            itemId: req.params.id,
+        });
+    }
+});
+
 // DELETE /api/meal-plan/:date/:slot
 router.delete('/meal-plan/:date/:slot', async (req, res) => {
     try {
