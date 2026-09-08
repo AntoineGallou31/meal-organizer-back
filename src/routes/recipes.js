@@ -557,6 +557,10 @@ router.post('/recipes', async (req, res) => {
     const validationError = validateRecipePayload(payload);
     if (validationError) return res.status(400).json(validationError);
 
+    if (!payload.months || payload.months.length === 0) {
+      payload.months = detectMonthsFromIngredients(payload.ingredients);
+    }
+
     const categoryIds = req.body?.categoryIds;
     const categoryName = typeof req.body?.category === 'string' ? req.body.category.trim() : '';
     const categoryNames = Array.isArray(req.body?.categories)
