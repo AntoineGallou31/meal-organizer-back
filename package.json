@@ -7,6 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
+    "vercel-build": "echo \"No build step required\"",
     "seed": "node src/scripts/seedCategories.js",
     "local-import:extract-links": "node scripts/localRecipeImport.js extract-links",
     "local-import:scrape": "node scripts/localRecipeImport.js scrape-links",
