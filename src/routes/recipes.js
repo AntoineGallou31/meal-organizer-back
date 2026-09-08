@@ -7,24 +7,12 @@ const {
   replaceCategoriesForRecipe,
   getOrCreateCategory,
 } = require('../services/categorizer');
+const { detectMonthsFromIngredients } = require('../services/ingredientMonths');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SEASON_INGREDIENTS = {
-  spring: ['asperge', 'petit pois', 'radis', 'epinard', 'fraise', 'artichaut', 'feve'],
-  summer: ['tomate', 'courgette', 'aubergine', 'poivron', 'mais', 'peche', 'abricot', 'melon', 'pasteque', 'basilic'],
-  autumn: ['potiron', 'potimarron', 'courge', 'champignon', 'chataigne', 'pomme', 'poire', 'raisin', 'chou', 'betterave'],
-  winter: ['poireau', 'panais', 'navet', 'endive', 'chou-fleur', 'brocoli', 'orange', 'clementine', 'truffe', 'celeri'],
-};
-
-const TITLE_RECIPE_KEYWORDS = [
-  'recette', 'soupe', 'veloute', 'salade', 'curry', 'gratin', 'quiche', 'pizza', 'burger', 'tacos',
-  'omelette', 'crepe', 'gateau', 'tarte', 'brownie', 'cookie', 'muffin', 'pancake', 'riz', 'risotto',
-  'pates', 'lasagne', 'ravioli', 'gnocchi', 'sauce', 'plat', 'dessert', 'poisson', 'poulet', 'boeuf',
-  'porc', 'agneau', 'tofu', 'lentilles', 'pois chiches', 'dhal', 'tajine', 'cassoulet', 'sandwich',
-];
 
 const STEP_ACTION_KEYWORDS = [
   'melanger', 'mixer', 'fouetter', 'cuire', 'prechauffer', 'chauffer', 'faire revenir', 'rissoler',
@@ -40,32 +28,6 @@ const CONTENT_NOISE_KEYWORDS = [
 ];
 
 const UNIT_OR_QUANTITY_REGEX = /(\b\d+(?:[.,]\d+)?\b|\b\d+\s*\/\s*\d+\b|\b(?:g|kg|mg|ml|cl|l|cs|c\.s\.|cas|c\.a\.s\.|cac|c\.a\.c\.|cuillere|cuilleres|teaspoon|tbsp|tsp|cup|cups|oz|lb)s?\b)/i;
-
-const ALERT_CATEGORY_COMPLETE = {
-  name: 'A completer',
-  color: '#F59E0B',
-};
-
-function normalizeTextForMatch(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim();
-}
-
-function titleLooksLikeRecipe(title) {
-  const normalizedTitle = normalizeTextForMatch(title);
-  if (!normalizedTitle) {
-    return { valid: true, matchedKeywords: [] };
-  }
-
-  const matchedKeywords = TITLE_RECIPE_KEYWORDS.filter((keyword) => normalizedTitle.includes(keyword));
-  return {
-    valid: matchedKeywords.length > 0,
-    matchedKeywords,
-  };
-}
 
 function cleanLine(value) {
   return String(value || '')
@@ -89,10 +51,6 @@ function normalizeImportedRecipeData(recipeData = {}) {
   const parsedPrepTime = rawPrepTime == null || rawPrepTime === ''
     ? null
     : Number.parseInt(String(rawPrepTime).replace(/[^\d]/g, ''), 10);
-  const rawConfidence = recipeData.confidence;
-  const parsedConfidence = rawConfidence == null || rawConfidence === ''
-    ? null
-    : Number(rawConfidence);
 
   return {
     ...recipeData,
@@ -110,7 +68,6 @@ function normalizeImportedRecipeData(recipeData = {}) {
     months: Array.isArray(recipeData.months)
       ? [...new Set(recipeData.months.map((month) => String(month || '').trim()).filter(Boolean))]
       : [],
-    confidence: Number.isFinite(parsedConfidence) ? parsedConfidence : null,
   };
 }
 
@@ -177,117 +134,6 @@ function sanitizeImportedSteps(steps = []) {
   return cleaned;
 }
 
-function evaluateRecipeCoherence({ title, ingredients, steps }) {
-  const cleanIngredients = (Array.isArray(ingredients) ? ingredients : [])
-    .map(cleanLine)
-    .filter(Boolean);
-  const cleanSteps = (Array.isArray(steps) ? steps : [])
-    .map(cleanLine)
-    .filter(Boolean);
-
-  const ingredientChars = cleanIngredients.reduce((sum, item) => sum + item.length, 0);
-  const stepChars = cleanSteps.reduce((sum, item) => sum + item.length, 0);
-  const averageStepLength = cleanSteps.length ? stepChars / cleanSteps.length : 0;
-  const quantitySignals = cleanIngredients.filter((line) => UNIT_OR_QUANTITY_REGEX.test(line)).length;
-  const quantityRatio = cleanIngredients.length ? quantitySignals / cleanIngredients.length : 0;
-  const normalizedStepsText = normalizeForComparison(cleanSteps.join(' '));
-  const actionSignals = STEP_ACTION_KEYWORDS.some((keyword) => normalizedStepsText.includes(keyword));
-
-  const normalizedLines = [...cleanIngredients, ...cleanSteps].map(normalizeForComparison).filter(Boolean);
-  const uniqueLines = new Set(normalizedLines);
-  const duplicateRatio = normalizedLines.length
-    ? 1 - (uniqueLines.size / normalizedLines.length)
-    : 0;
-
-  const noiseHits = CONTENT_NOISE_KEYWORDS.filter((keyword) => {
-    const normalizedKeyword = normalizeForComparison(keyword);
-    return normalizedStepsText.includes(normalizedKeyword);
-  }).length;
-
-  const urlLikeLines = [...cleanIngredients, ...cleanSteps].filter((line) => /https?:\/\//i.test(line)).length;
-  const urlRatio = normalizedLines.length ? urlLikeLines / normalizedLines.length : 0;
-
-  let score = 0;
-  const reasons = [];
-  const criticalIssues = [];
-
-  if (cleanIngredients.length >= 4) score += 20;
-  else if (cleanIngredients.length >= 2) score += 10;
-  else {
-    reasons.push('Nombre d\'ingrédients insuffisant');
-    criticalIssues.push('ingredients_count');
-  }
-
-  if (cleanSteps.length >= 3) score += 20;
-  else if (cleanSteps.length >= 2) score += 10;
-  else {
-    reasons.push('Nombre d\'étapes insuffisant');
-    criticalIssues.push('steps_count');
-  }
-
-  if (stepChars >= 120 && averageStepLength >= 18) score += 20;
-  else if (stepChars >= 70 && averageStepLength >= 14) score += 10;
-  else {
-    reasons.push('Préparation trop courte ou peu exploitable');
-    criticalIssues.push('steps_too_short');
-  }
-
-  if (ingredientChars >= 40) score += 10;
-  else reasons.push('Bloc ingrédients trop court');
-
-  if (quantityRatio >= 0.4) score += 10;
-  else reasons.push('Peu d\'indices de quantités dans les ingrédients');
-
-  if (actionSignals) score += 10;
-  else {
-    reasons.push('Aucun verbe d\'action culinaire détecté dans la préparation');
-    criticalIssues.push('no_cooking_actions');
-  }
-
-  const titleCheck = titleLooksLikeRecipe(title);
-  if (titleCheck.valid) score += 10;
-  else reasons.push('Titre peu représentatif d\'une recette');
-
-  if (noiseHits >= 2) {
-    score -= 25;
-    reasons.push('Contenu parasite détecté (cookies, réseaux sociaux, mentions légales, etc.)');
-    criticalIssues.push('noise_content');
-  }
-
-  if (duplicateRatio > 0.45) {
-    score -= 10;
-    reasons.push('Contenu très répétitif');
-  }
-
-  if (urlRatio > 0.25) {
-    score -= 15;
-    reasons.push('Trop de lignes ressemblent à des URLs');
-    criticalIssues.push('url_content');
-  }
-
-  const boundedScore = Math.max(0, Math.min(100, score));
-  const isCoherent = boundedScore >= 55 && criticalIssues.length === 0;
-
-  return {
-    isCoherent,
-    score: boundedScore,
-    reasons,
-    criticalIssues,
-    metrics: {
-      ingredientCount: cleanIngredients.length,
-      stepCount: cleanSteps.length,
-      ingredientChars,
-      stepChars,
-      averageStepLength,
-      quantityRatio,
-      noiseHits,
-      duplicateRatio,
-      urlRatio,
-      titleLooksLikeRecipe: titleCheck.valid,
-    },
-  };
-}
-
 function getMissingImportFields(recipeData = {}) {
   const missing = [];
   const title = recipeData.title ? String(recipeData.title).trim() : '';
@@ -303,222 +149,60 @@ function getMissingImportFields(recipeData = {}) {
   return missing;
 }
 
-function sanitizeScrapedLines(lines = [], { maxItems = 30, maxLength = 280 } = {}) {
-  if (!Array.isArray(lines)) return [];
-  return lines
-    .map((line) => cleanLine(line))
-    .filter(Boolean)
-    .slice(0, maxItems)
-    .map((line) => (line.length > maxLength ? `${line.slice(0, maxLength)}...` : line));
-}
-
-function buildImportValidationReport({ url, recipeData, titleCheck, coherenceCheck, missingFields }) {
-  const fieldErrors = [];
-  const imageUrl = recipeData.imageUrl ? String(recipeData.imageUrl).trim() : '';
-
-  if (missingFields.includes('title')) {
-    fieldErrors.push({
-      field: 'title',
-      code: 'MISSING_TITLE',
-      message: 'Titre manquant dans le contenu scrappé.',
-    });
-  } else if (!titleCheck.valid) {
-    fieldErrors.push({
-      field: 'title',
-      code: 'WEAK_TITLE',
-      message: 'Le titre extrait ne ressemble pas à un titre de recette.',
-      matchedKeywords: titleCheck.matchedKeywords,
-    });
-  }
-
-  if (missingFields.includes('image')) {
-    fieldErrors.push({
-      field: 'image',
-      code: 'MISSING_IMAGE',
-      message: 'Image introuvable dans la page source.',
-    });
-  } else if (imageUrl && !/^https?:\/\//i.test(imageUrl)) {
-    fieldErrors.push({
-      field: 'image',
-      code: 'INVALID_IMAGE_URL',
-      message: 'L\'image extraite n\'est pas une URL HTTP/HTTPS valide.',
-    });
-  }
-
-  if (missingFields.includes('ingredients')) {
-    fieldErrors.push({
-      field: 'ingredients',
-      code: 'MISSING_INGREDIENTS',
-      message: 'Aucun ingrédient exploitable trouvé.',
-    });
-  }
-
-  if (missingFields.includes('steps')) {
-    fieldErrors.push({
-      field: 'steps',
-      code: 'MISSING_STEPS',
-      message: 'Aucune étape de préparation exploitable trouvée.',
-    });
-  }
-
-  if (!coherenceCheck.isCoherent) {
-    fieldErrors.push({
-      field: 'content',
-      code: 'INCOHERENT_CONTENT',
-      message: 'Le contenu scrappé ne semble pas cohérent avec une recette de cuisine.',
-      reasons: coherenceCheck.reasons,
-      criticalIssues: coherenceCheck.criticalIssues,
-      score: coherenceCheck.score,
-    });
-  }
-
-  const hardBlockFields = new Set(['title', 'image']);
-  const hardErrors = fieldErrors.filter((entry) => hardBlockFields.has(entry.field));
-  const softErrors = fieldErrors.filter((entry) => !hardBlockFields.has(entry.field));
-  const hasContentIssues = softErrors.some((entry) => entry.field === 'ingredients' || entry.field === 'steps' || entry.field === 'content');
-
-  return {
-    hasIssues: fieldErrors.length > 0,
-    validationType: hardErrors.length > 0 ? 'hard' : (softErrors.length > 0 ? 'content' : null),
-    hardErrors,
-    softErrors,
-    canImportNormally: fieldErrors.length === 0,
-    canForceIncomplete: hardErrors.length > 0,
-    canImportWithoutContent: hasContentIssues && hardErrors.length === 0,
-    fieldErrors,
-    scrapedContent: {
-      sourceUrl: recipeData.sourceUrl || url,
-      title: recipeData.title ? String(recipeData.title).trim() : null,
-      imageUrl: recipeData.imageUrl ? String(recipeData.imageUrl).trim() : null,
-      prepTime: recipeData.prepTime || null,
-      servings: recipeData.servings || null,
-      ingredientsCount: Array.isArray(recipeData.ingredients) ? recipeData.ingredients.length : 0,
-      stepsCount: Array.isArray(recipeData.steps) ? recipeData.steps.length : 0,
-      ingredients: sanitizeScrapedLines(recipeData.ingredients),
-      steps: sanitizeScrapedLines(recipeData.steps),
-      partial: Boolean(recipeData.partial),
-      scrapingMeta: recipeData.scrapingMeta || null,
-    },
-    importValidation: coherenceCheck,
-  };
-}
-
-async function scrapeRecipeWithRetries(url) {
-  const maxAttempts = Number(process.env.IMPORT_URL_RETRY_ATTEMPTS || 3);
-  let recipeData = null;
-  let lastScrapeError = null;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      recipeData = await scrapeRecipe(url);
-      lastScrapeError = null;
-      break;
-    } catch (error) {
-      lastScrapeError = error;
-      if (attempt < maxAttempts) {
-        const delay = Math.min(2500, 400 * Math.pow(2, attempt - 1));
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  if (!recipeData) {
-    throw lastScrapeError || new Error('Extraction impossible');
-  }
-
-  return recipeData;
-}
-
 async function persistImportedRecipe({
   url,
   recipeData,
-  forceImportMode = null,
+  forceImport = false,
 }) {
   const normalizedRecipeData = normalizeImportedRecipeData(recipeData);
-  const missingFields = getMissingImportFields(normalizedRecipeData);
   const titleRaw = normalizedRecipeData.title ? String(normalizedRecipeData.title).trim() : '';
-  const titleCheck = titleLooksLikeRecipe(titleRaw);
-  const coherenceCheck = evaluateRecipeCoherence({
+  const missingFields = getMissingImportFields(normalizedRecipeData);
+
+  const recipePreview = {
     title: titleRaw,
-    ingredients: normalizedRecipeData.ingredients,
-    steps: normalizedRecipeData.steps,
-  });
-  const validationReport = buildImportValidationReport({
-    url,
-    recipeData: normalizedRecipeData,
-    titleCheck,
-    coherenceCheck,
-    missingFields,
-  });
-  const incoherentImport = !coherenceCheck.isCoherent;
-  const hasValidationIssues = validationReport.fieldErrors.length > 0;
-  const forceMode = forceImportMode === 'incomplete' || forceImportMode === 'contentless' || forceImportMode === 'normal' ? forceImportMode : null;
-  const canProceedNormally = validationReport.hardErrors.length === 0;
+    imageUrl: normalizedRecipeData.imageUrl || null,
+    sourceUrl: normalizedRecipeData.sourceUrl || url,
+  };
 
-  const preparedRecipeData = forceMode === 'contentless'
-    ? {
-      ...normalizedRecipeData,
-      ingredients: [],
-      steps: [],
-    }
-    : forceMode === 'normal' && hasValidationIssues
-    ? {
-      ...normalizedRecipeData,
-      ingredients: sanitizeImportedIngredients(normalizedRecipeData.ingredients),
-      steps: sanitizeImportedSteps(normalizedRecipeData.steps),
-    }
-    : normalizedRecipeData;
-
-  if (hasValidationIssues && !forceMode) {
+  const isBlocked = missingFields.includes('title') || missingFields.includes('image');
+  if (isBlocked) {
     return {
-      needsImportReview: true,
-      validationType: validationReport.validationType,
-      canImportNormally: validationReport.canImportNormally,
-      canForceIncomplete: validationReport.canForceIncomplete,
-      canImportWithoutContent: validationReport.canImportWithoutContent,
-      recipePreview: {
-        title: titleRaw,
-        imageUrl: normalizedRecipeData.imageUrl || null,
-        sourceUrl: normalizedRecipeData.sourceUrl || url,
-      },
+      importBlocked: true,
+      recipePreview,
       missingFields,
-      titleCheck,
-      fieldErrors: validationReport.fieldErrors,
-      scrapedContent: validationReport.scrapedContent,
-      importValidation: validationReport.importValidation,
     };
   }
 
-  if (forceMode === 'normal' && !canProceedNormally) {
+  const needsReview = missingFields.includes('ingredients') || missingFields.includes('steps');
+  if (needsReview && !forceImport) {
     return {
       needsImportReview: true,
-      validationType: validationReport.validationType,
-      canImportNormally: false,
-      canForceIncomplete: validationReport.canForceIncomplete,
-      canImportWithoutContent: validationReport.canImportWithoutContent,
-      recipePreview: {
-        title: titleRaw,
-        imageUrl: normalizedRecipeData.imageUrl || null,
-        sourceUrl: normalizedRecipeData.sourceUrl || url,
-      },
+      recipePreview,
       missingFields,
-      titleCheck,
-      fieldErrors: validationReport.fieldErrors,
-      scrapedContent: validationReport.scrapedContent,
-      importValidation: validationReport.importValidation,
     };
   }
+
+  const preparedRecipeData = {
+    ...normalizedRecipeData,
+    ingredients: sanitizeImportedIngredients(normalizedRecipeData.ingredients),
+    steps: sanitizeImportedSteps(normalizedRecipeData.steps),
+  };
+
+  const importedIngredients = Array.isArray(preparedRecipeData.ingredients) ? preparedRecipeData.ingredients : [];
+  const importedMonths = Array.isArray(preparedRecipeData.months) ? preparedRecipeData.months : [];
+  const months = importedMonths.length > 0
+    ? importedMonths
+    : detectMonthsFromIngredients(importedIngredients);
 
   const insertPayload = {
     title: titleRaw || 'Recette importee',
     image_url: preparedRecipeData.imageUrl || null,
     prep_time: preparedRecipeData.prepTime || null,
     servings: preparedRecipeData.servings || null,
-    ingredients: Array.isArray(preparedRecipeData.ingredients) ? preparedRecipeData.ingredients : [],
+    ingredients: importedIngredients,
     steps: Array.isArray(preparedRecipeData.steps) ? preparedRecipeData.steps : [],
     source_url: preparedRecipeData.sourceUrl || url,
-    months: Array.isArray(preparedRecipeData.months) ? preparedRecipeData.months : [],
-    confidence: Number.isFinite(preparedRecipeData.confidence) ? preparedRecipeData.confidence : null,
+    months,
   };
 
   const { data: existingRecipe, error: duplicateCheckError } = await supabase
@@ -555,11 +239,7 @@ async function persistImportedRecipe({
   let autoDetected = false;
   let confident = true;
 
-  if (forceMode === 'incomplete') {
-    const toCompleteCategoryId = await getOrCreateCategory(ALERT_CATEGORY_COMPLETE.name, ALERT_CATEGORY_COMPLETE.color);
-    assignedCategoryIds.add(toCompleteCategoryId);
-    confident = false;
-  } else if (Array.isArray(preparedRecipeData.categories) && preparedRecipeData.categories.length > 0) {
+  if (Array.isArray(preparedRecipeData.categories) && preparedRecipeData.categories.length > 0) {
     for (const categoryName of preparedRecipeData.categories) {
       const categoryId = await getOrCreateCategory(categoryName);
       if (categoryId) assignedCategoryIds.add(categoryId);
@@ -590,17 +270,8 @@ async function persistImportedRecipe({
       ...mappedRecipe,
       categories,
       missingFields,
-      incomplete: forceMode === 'incomplete',
-      importMode: forceMode === 'incomplete'
-        ? 'incomplete'
-        : forceMode === 'contentless'
-          ? 'contentless'
-          : 'normal',
       autoDetected,
       confident,
-      incoherentImport: mappedRecipe.incoherent_import,
-      restrictedDetail: mappedRecipe.restricted_detail,
-      importValidation: mappedRecipe.import_validation,
     },
   };
 }
@@ -618,24 +289,11 @@ function mapRecipeWithCategories(recipe) {
   const months = Array.isArray(recipe.months)
     ? recipe.months
     : (Array.isArray(recipe.seasons) ? recipe.seasons : []);
-  const confidence = Number.isFinite(Number(recipe.confidence)) ? Number(recipe.confidence) : null;
   const categories = (recipe.recipe_categories || [])
     .map((rc) => rc.categories)
     .filter(Boolean);
   const primaryCategory = pickPrimaryCategory(categories);
-
-  const hasToCompleteCategory = categories.some((category) => {
-    const name = normalizeTextForMatch(category?.name);
-    return name === 'a completer';
-  });
-
-  const importValidation = evaluateRecipeCoherence({
-    title: recipe.title,
-    ingredients,
-    steps: instructions,
-  });
-  const incoherentImport = !importValidation.isCoherent;
-  const restrictedDetail = Boolean(recipe.source_url) && hasToCompleteCategory;
+  const restrictedDetail = ingredients.length === 0 || instructions.length === 0;
 
   return {
     id: recipe.id,
@@ -655,15 +313,8 @@ function mapRecipeWithCategories(recipe) {
     source_url: recipe.source_url,
     createdAt: recipe.created_at,
     created_at: recipe.created_at,
-    confidence,
-    externalOnly: Boolean(recipe.source_url) && ingredients.length === 0 && instructions.length === 0,
-    external_only: Boolean(recipe.source_url) && ingredients.length === 0 && instructions.length === 0,
-    incoherentImport,
-    incoherent_import: incoherentImport,
     restrictedDetail,
     restricted_detail: restrictedDetail,
-    importValidation,
-    import_validation: importValidation,
   };
 }
 
@@ -672,7 +323,7 @@ function buildRecipeSelectString({ summary = false, categoryId = '' } = {}) {
     return `id,title,image_url,prep_time,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id)`;
   }
 
-  return `id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
+  return `id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories${categoryId ? '!inner' : ''}(category_id,categories(id,name,color))`;
 }
 
 function parsePositiveInteger(value, fallback) {
@@ -687,7 +338,7 @@ function parsePositiveInteger(value, fallback) {
 async function fetchRecipeWithCategoriesById(recipeId) {
   const { data, error } = await supabase
     .from('recipes')
-    .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories(categories(id,name,color))')
+    .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories(categories(id,name,color))')
     .eq('id', recipeId)
     .maybeSingle();
 
@@ -733,11 +384,6 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
   const prepTimeValue = prepTimeParsed === undefined
     ? undefined
     : (prepTimeInput === null ? null : (Number.isFinite(prepTimeParsed) ? prepTimeParsed : undefined));
-  const confidenceInput = body.confidence;
-  const confidenceParsed = confidenceInput === undefined ? undefined : Number(confidenceInput);
-  const confidence = confidenceInput === undefined
-    ? undefined
-    : (confidenceInput === null ? null : (Number.isFinite(confidenceParsed) ? confidenceParsed : undefined));
   const imageValue = body.image ?? body.imageUrl ?? body.image_url ?? undefined;
 
   const payload = {
@@ -749,7 +395,6 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
     steps,
     source_url: body.sourceUrl ?? body.source_url ?? undefined,
     months,
-    confidence,
   };
 
   if (partial) {
@@ -921,7 +566,7 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
     if (recipeCategoryIds.length) {
       const { data: similar, error: similarError } = await supabase
         .from('recipes')
-        .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,confidence,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
+        .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
         .neq('id', req.params.id)
         .in('recipe_categories.category_id', recipeCategoryIds)
         .order('created_at', { ascending: false })
@@ -1021,64 +666,58 @@ router.post('/recipes', async (req, res) => {
 
 // POST /api/recipes/import
 router.post('/recipes/import', async (req, res) => {
-  const { url, forceImportMode } = req.body;
-    if (!url) {
-        return res.status(400).json({ error: 'URL is required', field: 'url' });
+  const { url, forceImport } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required', field: 'url' });
+  }
+
+  try {
+    const recipeData = await scrapeRecipe(url);
+    const persisted = await persistImportedRecipe({
+      url,
+      recipeData,
+      forceImport: forceImport === true,
+    });
+
+    if (persisted.importBlocked) {
+      return res.status(422).json({
+        error: 'Le titre et la photo sont indispensables pour importer une recette.',
+        code: 'IMPORT_BLOCKED',
+        missingFields: persisted.missingFields,
+        recipePreview: persisted.recipePreview,
+      });
     }
 
-    try {
-        const recipeData = await scrapeRecipeWithRetries(url);
-        const persisted = await persistImportedRecipe({
-          url,
-          recipeData,
-          forceImportMode: typeof forceImportMode === 'string' ? forceImportMode : null,
-        });
-
-        if (persisted.needsImportReview) {
-          const hasHardBlockingError = persisted.fieldErrors.some((entry) => entry.field === 'title' || entry.field === 'image');
-          return res.status(422).json({
-            error: hasHardBlockingError
-              ? 'Import annulé automatiquement: titre ou image invalide.'
-              : 'Le contenu importé est incomplet ou incohérent.',
-            code: 'IMPORT_VALIDATION_FAILED',
-            validationType: persisted.validationType,
-            canImportNormally: Boolean(persisted.canImportNormally),
-            canForceIncomplete: Boolean(persisted.canForceIncomplete),
-            canImportWithoutContent: Boolean(persisted.canImportWithoutContent),
-            missingFields: persisted.missingFields,
-            titleKeywordsMatched: persisted.titleCheck.matchedKeywords,
-            recipePreview: persisted.recipePreview,
-            fieldErrors: persisted.fieldErrors,
-            scrapedContent: persisted.scrapedContent,
-            importValidation: persisted.importValidation,
-          });
-        }
-
-        res.status(201).json(persisted.recipe);
-    } catch (err) {
-        if (err instanceof APIError) {
-          return res.status(err.statusCode).json({
-            error: err.message,
-            code: err.code,
-            url,
-            details: err.details || null,
-          });
-        }
-
-        if (err.partial) {
-            return res.status(422).json({ error: err.message, url });
-        }
-        console.error(err);
-        res.status(500).json({
-          error: 'Failed to import recipe',
-          code: err.code || 'IMPORT_FAILED',
-          url,
-          details: {
-            message: err.message || 'Erreur inconnue pendant l\'import',
-            ...(err.details ? { importDetails: err.details } : {}),
-          },
-        });
+    if (persisted.needsImportReview) {
+      return res.status(422).json({
+        error: 'Certaines informations de la recette n\'ont pas pu être récupérées.',
+        code: 'IMPORT_VALIDATION_FAILED',
+        missingFields: persisted.missingFields,
+        recipePreview: persisted.recipePreview,
+      });
     }
+
+    res.status(201).json(persisted.recipe);
+  } catch (err) {
+    if (err instanceof APIError) {
+      return res.status(err.statusCode).json({
+        error: err.message,
+        code: err.code,
+        url,
+        details: err.details || null,
+      });
+    }
+
+    console.error(err);
+    res.status(500).json({
+      error: 'Failed to import recipe',
+      code: err.code || 'IMPORT_FAILED',
+      url,
+      details: {
+        message: err.message || 'Erreur inconnue pendant l\'import',
+      },
+    });
+  }
 });
 
 // PUT /api/recipes/:id

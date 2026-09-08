@@ -14,6 +14,3 @@
 *.swo
 *.zip
 .env
-/pintarest_export
-/recipe-scraper
-/scripts

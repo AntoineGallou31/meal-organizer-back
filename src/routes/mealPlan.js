@@ -36,7 +36,6 @@ const isMissingColumnError = (error) => {
 };
 
 const MEAL_PLAN_ITEM_SELECT_CANDIDATES = [
-    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,incoherent_import,restricted_detail,import_validation,recipe_categories(category_id,categories(id,name,color)))',
     'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))',
     'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url)',
 ];

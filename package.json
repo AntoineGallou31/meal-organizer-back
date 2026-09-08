@@ -8,10 +8,7 @@
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "vercel-build": "echo \"No build step required\"",
-    "seed": "node src/scripts/seedCategories.js",
-    "local-import:extract-links": "node scripts/localRecipeImport.js extract-links",
-    "local-import:scrape": "node scripts/localRecipeImport.js scrape-links",
-    "local-import:import": "node scripts/localRecipeImport.js import-json"
+    "seed": "node src/scripts/seedCategories.js"
   },
   "keywords": [],
   "author": "",
