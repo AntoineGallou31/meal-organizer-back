@@ -3,7 +3,7 @@ function pickPrimaryCategory(categories = []) {
   return categories.find((category) => category && !category.is_default) || categories[0] || null;
 }
 
-function mapRecipeWithCategories(recipe) {
+function mapRecipeWithCategories(recipe, { cookCount } = {}) {
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
   const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
   const months = Array.isArray(recipe.months) ? recipe.months : [];
@@ -27,6 +27,7 @@ function mapRecipeWithCategories(recipe) {
     sourceUrl: recipe.source_url,
     createdAt: recipe.created_at,
     restrictedDetail,
+    cookCount: Number.isInteger(cookCount) ? cookCount : 0,
   };
 }
 

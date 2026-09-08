@@ -9,6 +9,7 @@ const {
 } = require('../services/categorizer');
 const { detectMonthsFromIngredients } = require('../services/ingredientMonths');
 const { mapRecipeWithCategories } = require('../services/recipeMapper');
+const { getCookCountMap, getCookCountForRecipe } = require('../services/recipePopularity');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
@@ -458,20 +459,27 @@ router.get('/recipes', async (req, res) => {
       query = query.in('id', ingredientFilteredIds);
     }
 
+    const sortByPopularity = sort === 'popular';
+
     if (sort === 'oldest') {
       query = query.order('created_at', { ascending: true });
     } else if (sort === 'prepTime') {
       query = query.order('prep_time', { ascending: true });
-    } else {
+    } else if (!sortByPopularity) {
       query = query.order('created_at', { ascending: false });
     }
 
-    if (paged) {
+    // Le tri par popularite depend d'un compte calcule en dehors de la DB,
+    // donc on ne peut pas paginer via `range` avant d'avoir trie en memoire.
+    if (paged && !sortByPopularity) {
       const offset = (page - 1) * limit;
       query = query.range(offset, offset + limit);
     }
 
-    const { data, error } = await query;
+    const [{ data, error }, cookCountMap] = await Promise.all([
+      query,
+      sortByPopularity ? getCookCountMap() : Promise.resolve(null),
+    ]);
     if (error) {
       throw new APIError(
         'Impossible de récupérer les recettes',
@@ -480,20 +488,34 @@ router.get('/recipes', async (req, res) => {
         { supabaseError: error.message }
       );
     }
-    const visibleRecipes = hiddenIncompleteRecipeIds.length
+    let visibleRecipes = hiddenIncompleteRecipeIds.length
       ? (data || []).filter((recipe) => !hiddenIncompleteRecipeIds.includes(recipe.id))
       : (data || []);
 
+    if (sortByPopularity) {
+      visibleRecipes = [...visibleRecipes].sort(
+        (a, b) => (cookCountMap[b.id] || 0) - (cookCountMap[a.id] || 0)
+      );
+      if (paged) {
+        const offset = (page - 1) * limit;
+        visibleRecipes = visibleRecipes.slice(offset, offset + limit + 1);
+      }
+    }
+
+    const toResponse = (recipe) => mapRecipeWithCategories(recipe, {
+      cookCount: cookCountMap ? (cookCountMap[recipe.id] || 0) : undefined,
+    });
+
     if (paged) {
       return res.json({
-        items: visibleRecipes.slice(0, limit).map(mapRecipeWithCategories),
+        items: visibleRecipes.slice(0, limit).map(toResponse),
         page,
         limit,
         hasMore: visibleRecipes.length > limit,
       });
     }
 
-    res.json(visibleRecipes.map(mapRecipeWithCategories));
+    res.json(visibleRecipes.map(toResponse));
   } catch (error) {
     handleError(error, res, { endpoint: 'GET /api/recipes' });
   }
@@ -541,8 +563,10 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
       similarRecipes = [...unique.values()];
     }
 
+    const cookCount = await getCookCountForRecipe(req.params.id);
+
     res.json({
-      ...mapRecipeWithCategories(data),
+      ...mapRecipeWithCategories(data, { cookCount }),
       similarRecipes,
     });
   } catch (error) {
