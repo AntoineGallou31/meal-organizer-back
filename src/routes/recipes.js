@@ -8,6 +8,7 @@ const {
   getOrCreateCategory,
 } = require('../services/categorizer');
 const { detectMonthsFromIngredients } = require('../services/ingredientMonths');
+const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
@@ -69,11 +70,6 @@ function normalizeImportedRecipeData(recipeData = {}) {
       ? [...new Set(recipeData.months.map((month) => String(month || '').trim()).filter(Boolean))]
       : [],
   };
-}
-
-function pickPrimaryCategory(categories = []) {
-  if (!Array.isArray(categories) || categories.length === 0) return null;
-  return categories.find((category) => category && !category.is_default) || categories[0] || null;
 }
 
 function normalizeForComparison(value) {
@@ -261,14 +257,11 @@ async function persistImportedRecipe({
   }
 
   const recipeWithCategories = await fetchRecipeWithCategoriesById(inserted.id);
-  const mappedRecipe = mapRecipeWithCategories(recipeWithCategories);
-  const categories = (recipeWithCategories.recipe_categories || []).map((rc) => rc.categories).filter(Boolean);
 
   return {
     needsImportReview: false,
     recipe: {
-      ...mappedRecipe,
-      categories,
+      ...mapRecipeWithCategories(recipeWithCategories),
       missingFields,
       autoDetected,
       confident,
@@ -281,41 +274,6 @@ function normalizeCategoryIds(categoryIds) {
   const cleaned = categoryIds.filter((id) => typeof id === 'string' && UUID_REGEX.test(id));
   if (cleaned.length !== categoryIds.length) return null;
   return [...new Set(cleaned)];
-}
-
-function mapRecipeWithCategories(recipe) {
-  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-  const instructions = Array.isArray(recipe.steps) ? recipe.steps : [];
-  const months = Array.isArray(recipe.months)
-    ? recipe.months
-    : (Array.isArray(recipe.seasons) ? recipe.seasons : []);
-  const categories = (recipe.recipe_categories || [])
-    .map((rc) => rc.categories)
-    .filter(Boolean);
-  const primaryCategory = pickPrimaryCategory(categories);
-  const restrictedDetail = ingredients.length === 0 || instructions.length === 0;
-
-  return {
-    id: recipe.id,
-    title: recipe.title,
-    image: recipe.image_url ?? null,
-    imageUrl: recipe.image_url ?? null,
-    category: primaryCategory?.name ?? null,
-    categories,
-    months,
-    ingredients,
-    instructions,
-    steps: instructions,
-    duration: recipe.prep_time ?? null,
-    prepTime: recipe.prep_time ?? null,
-    servings: recipe.servings,
-    sourceUrl: recipe.source_url,
-    source_url: recipe.source_url,
-    createdAt: recipe.created_at,
-    created_at: recipe.created_at,
-    restrictedDetail,
-    restricted_detail: restrictedDetail,
-  };
 }
 
 function buildRecipeSelectString({ summary = false, categoryId = '' } = {}) {
@@ -367,33 +325,26 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
   const ingredients = Array.isArray(body.ingredients)
     ? body.ingredients.map((item) => String(item).trim()).filter(Boolean)
     : undefined;
-  const rawSteps = Array.isArray(body.steps)
-    ? body.steps
-    : (Array.isArray(body.instructions) ? body.instructions : undefined);
-  const steps = Array.isArray(rawSteps)
-    ? rawSteps.map((item) => String(item).trim()).filter(Boolean)
+  const steps = Array.isArray(body.steps)
+    ? body.steps.map((item) => String(item).trim()).filter(Boolean)
     : undefined;
-  const monthsInput = Array.isArray(body.months)
-    ? body.months
-    : (Array.isArray(body.seasons) ? body.seasons : undefined);
-  const months = Array.isArray(monthsInput)
-    ? [...new Set(monthsInput.map((m) => String(m).trim()).filter(Boolean))]
+  const months = Array.isArray(body.months)
+    ? [...new Set(body.months.map((m) => String(m).trim()).filter(Boolean))]
     : undefined;
-  const prepTimeInput = body.prepTime ?? body.prep_time ?? body.duration;
+  const prepTimeInput = body.prepTime;
   const prepTimeParsed = prepTimeInput === undefined ? undefined : Number(prepTimeInput);
   const prepTimeValue = prepTimeParsed === undefined
     ? undefined
     : (prepTimeInput === null ? null : (Number.isFinite(prepTimeParsed) ? prepTimeParsed : undefined));
-  const imageValue = body.image ?? body.imageUrl ?? body.image_url ?? undefined;
 
   const payload = {
     title,
-    image_url: imageValue,
+    image_url: body.imageUrl ?? undefined,
     prep_time: prepTimeValue,
     servings: body.servings ?? undefined,
     ingredients,
     steps,
-    source_url: body.sourceUrl ?? body.source_url ?? undefined,
+    source_url: body.sourceUrl ?? undefined,
     months,
   };
 
@@ -535,7 +486,7 @@ router.get('/recipes', async (req, res) => {
 
     if (paged) {
       return res.json({
-        items: visibleRecipes.slice(0, limit),
+        items: visibleRecipes.slice(0, limit).map(mapRecipeWithCategories),
         page,
         limit,
         hasMore: visibleRecipes.length > limit,
@@ -592,8 +543,7 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
 
     res.json({
       ...mapRecipeWithCategories(data),
-      categories: (data.recipe_categories || []).map((rc) => rc.categories).filter(Boolean),
-      similar_recipes: similarRecipes,
+      similarRecipes,
     });
   } catch (error) {
     handleError(error, res, { endpoint: 'GET /api/recipes/:id', recipeId: req.params.id });
@@ -654,8 +604,7 @@ router.post('/recipes', async (req, res) => {
     const withCategories = await fetchRecipeWithCategoriesById(data.id);
 
     res.status(201).json({
-      ...withCategories,
-      categories: (withCategories.recipe_categories || []).map((rc) => rc.categories).filter(Boolean),
+      ...mapRecipeWithCategories(withCategories),
       autoDetected,
       confident,
     });
@@ -734,13 +683,15 @@ router.put('/recipes/:id', validateUUID('id'), async (req, res) => {
       .from('recipes')
       .update(payload)
       .eq('id', req.params.id)
-      .select()
+      .select('id')
       .single();
     if (error) throw error;
     if (!data) {
       throw new APIError('Recette non trouvée avec cet ID', 404, 'RECIPE_NOT_FOUND');
     }
-    res.json(data);
+
+    const withCategories = await fetchRecipeWithCategoriesById(data.id);
+    res.json(mapRecipeWithCategories(withCategories));
   } catch (error) {
     handleError(error, res, { endpoint: 'PUT /api/recipes/:id', recipeId: req.params.id });
   }

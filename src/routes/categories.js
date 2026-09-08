@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const supabase = require('../services/supabase');
 const { replaceCategoriesForRecipe } = require('../services/categorizer');
+const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 
@@ -15,21 +16,6 @@ function normalizeKeywords(keywords) {
       .map((k) => String(k).trim().toLowerCase())
       .filter(Boolean)
   )];
-}
-
-function mapRecipeWithCategories(recipe) {
-  return {
-    id: recipe.id,
-    title: recipe.title,
-    image_url: recipe.image_url,
-    prep_time: recipe.prep_time,
-    servings: recipe.servings,
-    source_url: recipe.source_url,
-    created_at: recipe.created_at,
-    categories: (recipe.recipe_categories || [])
-      .map((rc) => rc.categories)
-      .filter(Boolean),
-  };
 }
 
 // GET /api/categories
@@ -276,7 +262,10 @@ router.get('/categories/:id/recipes', validateUUID('id'), async (req, res) => {
         image_url,
         prep_time,
         servings,
+        ingredients,
+        steps,
         source_url,
+        months,
         created_at,
         recipe_categories!inner (
           categories ( id, name, color )

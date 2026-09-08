@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const supabase = require('../services/supabase');
 const { APIError, handleError } = require('../services/errorHandler');
+const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const router = Router();
 
 const SLOT_VALUES = ['lunch', 'dinner'];
@@ -36,8 +37,8 @@ const isMissingColumnError = (error) => {
 };
 
 const MEAL_PLAN_ITEM_SELECT_CANDIDATES = [
-    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))',
-    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url)',
+    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,ingredients,steps,recipe_categories(category_id,categories(id,name,color)))',
+    'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,ingredients,steps)',
 ];
 
 const toMealPlanItemResponse = (row) => ({
@@ -48,7 +49,7 @@ const toMealPlanItemResponse = (row) => ({
     type: row.type,
     recipeId: row.recipe_id ?? null,
     note: row.note ?? null,
-    recipe: row.recipes ?? null,
+    recipe: row.recipes ? mapRecipeWithCategories(row.recipes) : null,
     createdAt: row.created_at ?? null,
 });
 
@@ -182,7 +183,7 @@ router.post('/meal-plan/items', async (req, res) => {
         const { data, error } = await supabase
             .from('meal_plan_items')
             .insert(payload)
-            .select('id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))')
+            .select('id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,ingredients,steps,recipe_categories(category_id,categories(id,name,color)))')
             .single();
 
         if (error) {
@@ -265,7 +266,7 @@ router.put('/meal-plan/items/:id', async (req, res) => {
             .from('meal_plan_items')
             .update(updates)
             .eq('id', id)
-            .select('id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,recipe_categories(category_id,categories(id,name,color)))')
+            .select('id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,ingredients,steps,recipe_categories(category_id,categories(id,name,color)))')
             .maybeSingle();
 
         if (error) throw error;
