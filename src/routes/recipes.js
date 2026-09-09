@@ -10,6 +10,7 @@ const {
 const { detectMonthsFromIngredients } = require('../services/ingredientMonths');
 const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const { getCookCountMap, getCookCountForRecipe } = require('../services/recipePopularity');
+const { getWeeklySuggestions } = require('../services/recipeRecommendation');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
@@ -527,6 +528,31 @@ router.get('/recipes', async (req, res) => {
     res.json(visibleRecipes.map(toResponse));
   } catch (error) {
     handleError(error, res, { endpoint: 'GET /api/recipes' });
+  }
+});
+
+// GET /api/recipes/suggestions
+router.get('/recipes/suggestions', async (req, res) => {
+  try {
+    const limit = parsePositiveInteger(req.query.limit, 7);
+    const week = typeof req.query.week === 'string' ? req.query.week.trim() : '';
+    const excludeRecipeIds = typeof req.query.exclude === 'string'
+      ? req.query.exclude.split(',').map((id) => id.trim()).filter(Boolean)
+      : [];
+
+    const { week: resolvedWeek, suggestions } = await getWeeklySuggestions({ week, limit, excludeRecipeIds });
+
+    res.json({
+      week: resolvedWeek,
+      items: suggestions.map(({ recipe, score, cookCount, lastCookedAt, reasons }) => ({
+        ...mapRecipeWithCategories(recipe, { cookCount }),
+        suggestionScore: score,
+        lastCookedAt,
+        suggestionReasons: reasons,
+      })),
+    });
+  } catch (error) {
+    handleError(error, res, { endpoint: 'GET /api/recipes/suggestions' });
   }
 });
 
