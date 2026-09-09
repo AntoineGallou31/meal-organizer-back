@@ -350,7 +350,7 @@ function normalizeRecipePayload(body = {}, { partial = false } = {}) {
 
   const payload = {
     title,
-    image_url: body.imageUrl ?? undefined,
+    image_url: body.imageUrl === undefined ? undefined : (body.imageUrl || null),
     prep_time: prepTimeValue,
     servings: body.servings ?? undefined,
     ingredients,
@@ -379,16 +379,12 @@ function validateRecipePayload(payload, { partial = false } = {}) {
     }
   }
 
-  if (!partial || payload.ingredients !== undefined) {
-    if (!Array.isArray(payload.ingredients) || payload.ingredients.length === 0) {
-      return { error: 'Les ingrédients sont requis', field: 'ingredients' };
-    }
+  if (payload.ingredients !== undefined && !Array.isArray(payload.ingredients)) {
+    return { error: 'Les ingrédients doivent être une liste', field: 'ingredients' };
   }
 
-  if (!partial || payload.steps !== undefined) {
-    if (!Array.isArray(payload.steps) || payload.steps.length === 0) {
-      return { error: 'Les étapes sont requises', field: 'steps' };
-    }
+  if (payload.steps !== undefined && !Array.isArray(payload.steps)) {
+    return { error: 'Les étapes doivent être une liste', field: 'steps' };
   }
 
   return null;
