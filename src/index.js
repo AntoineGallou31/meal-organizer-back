@@ -16,7 +16,8 @@ app.use(cors({
   origin: [
     'http://localhost:5173',
     'http://localhost:5174',
-    'https://meal-organizer-front.vercel.app'
+    'https://meal-organizer-front.vercel.app',
+    'https://meal-organizer-front-demo.vercel.app'
   ]
 }));
 app.use(express.json({ limit: '10mb' }));
