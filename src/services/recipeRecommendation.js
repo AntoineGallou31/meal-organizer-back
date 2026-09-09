@@ -5,26 +5,18 @@ const MONTH_NAMES = [
   'Juillet', 'Aout', 'Septembre', 'Octobre', 'Novembre', 'Decembre',
 ];
 
-// Poids du score. Ajustables sans toucher a la logique.
-const WEIGHTS = {
-  freshness: 40, // jamais faite ou faite il y a longtemps -> score plus haut
-  rarity: 25, // recette peu cuisinee au global -> score plus haut
-  season: 20, // recette de saison ce mois-ci
-  diversity: 15, // categorie differente des repas recents du planning
-};
-
 // Au-dela de ce nombre de jours, la fraicheur est consideree maximale.
 const FRESHNESS_CAP_DAYS = 60;
 // Nombre de derniers repas planifies (faits) a regarder pour la diversite.
 const RECENT_MEALS_WINDOW = 5;
-// Nombre de recettes cuisinees "beaucoup" servant a plafonner le malus de rarete.
-const RARITY_CAP_COUNT = 10;
 // Malus applique (en points de score) a chaque recette deja retenue dans le
-// lot de la semaine pour ses categories, afin de diversifier la selection.
-const INTRA_LIST_CATEGORY_PENALTY = 12;
+// lot pour ses categories, afin de diversifier la selection.
+const INTRA_LIST_CATEGORY_PENALTY = 3;
+// Nombre d'ids memorises par semaine pour pouvoir les exclure la semaine suivante.
+const REMEMBERED_SUGGESTIONS_COUNT = 30;
 
-// Categories jamais proposees dans les suggestions de la semaine : ce ne
-// sont pas des plats de tous les jours (boissons, sucre, apero, condiments).
+// Categories jamais proposees dans les suggestions : ce ne sont pas des
+// plats de tous les jours (boissons, sucre, apero, condiments).
 const EXCLUDED_CATEGORY_NAMES = [
   'cocktails',
   'desserts',
@@ -67,10 +59,9 @@ function daysBetween(dateStringA, dateStringB) {
   return Math.round((a - b) / msPerDay);
 }
 
-// Semaine ISO courante au format YYYY-Www, coherent avec routes/mealPlan.js.
-function getCurrentIsoWeek() {
-  const now = new Date();
-  const target = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+// Semaine ISO au format YYYY-Www, coherent avec routes/mealPlan.js.
+function toIsoWeek(date) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = target.getUTCDay() || 7;
   target.setUTCDate(target.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
@@ -78,8 +69,14 @@ function getCurrentIsoWeek() {
   return `${target.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
-function isValidIsoWeek(week) {
-  return typeof week === 'string' && /^\d{4}-W\d{2}$/.test(week);
+function getCurrentIsoWeek() {
+  return toIsoWeek(new Date());
+}
+
+function getPreviousIsoWeek() {
+  const now = new Date();
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return toIsoWeek(oneWeekAgo);
 }
 
 // Historique des recettes deja planifiees a une date passee : pour chacune,
@@ -132,21 +129,48 @@ async function getRecentCategoryIds(limit = RECENT_MEALS_WINDOW) {
   return categoryIds;
 }
 
+// Ids suggeres la semaine ISO precedente, pour ne pas reproposer les memes
+// recettes deux semaines de suite. Retombe sur une liste vide si la table
+// n'existe pas encore (avant migration) ou si rien n'a ete enregistre.
+async function getPreviouslySuggestedRecipeIds() {
+  const { data, error } = await supabase
+    .from('weekly_suggestions')
+    .select('recipe_ids')
+    .eq('week', getPreviousIsoWeek())
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === '42P01' || /does not exist|schema cache/i.test(error.message || '')) {
+      return [];
+    }
+    throw error;
+  }
+
+  return data?.recipe_ids || [];
+}
+
+async function rememberThisWeekSuggestions(recipeIds) {
+  const { error } = await supabase
+    .from('weekly_suggestions')
+    .upsert(
+      {
+        week: getCurrentIsoWeek(),
+        recipe_ids: recipeIds.slice(0, REMEMBERED_SUGGESTIONS_COUNT),
+        created_at: new Date().toISOString(),
+      },
+      { onConflict: 'week' }
+    );
+
+  if (error && error.code !== '42P01' && !/does not exist|schema cache/i.test(error.message || '')) {
+    throw error;
+  }
+}
+
 function computeFreshnessScore(lastDate) {
   if (!lastDate) return 1; // jamais cuisinee = fraicheur maximale
   const daysSince = daysBetween(todayDateString(), lastDate);
   if (daysSince <= 0) return 0;
   return Math.min(daysSince, FRESHNESS_CAP_DAYS) / FRESHNESS_CAP_DAYS;
-}
-
-function computeRarityScore(cookCount) {
-  const cappedCount = Math.min(cookCount, RARITY_CAP_COUNT);
-  return 1 - cappedCount / RARITY_CAP_COUNT;
-}
-
-function computeSeasonScore(months) {
-  if (!Array.isArray(months) || months.length === 0) return 0.5; // recette non renseignee = neutre
-  return months.includes(getCurrentMonthName()) ? 1 : 0;
 }
 
 function computeDiversityScore(recipeCategoryIds, recentCategoryIds) {
@@ -156,7 +180,11 @@ function computeDiversityScore(recipeCategoryIds, recentCategoryIds) {
   return overlaps ? 0 : 1;
 }
 
-function scoreRecipe(recipe, { history, recentCategoryIds }) {
+function isInSeason(months) {
+  return Array.isArray(months) && months.includes(getCurrentMonthName());
+}
+
+function evaluateRecipe(recipe, { history, recentCategoryIds }) {
   const entry = history[recipe.id];
   const cookCount = entry?.count || 0;
   const lastDate = entry?.lastDate || null;
@@ -164,165 +192,96 @@ function scoreRecipe(recipe, { history, recentCategoryIds }) {
     .map((rc) => rc.category_id)
     .filter(Boolean);
 
-  const freshness = computeFreshnessScore(lastDate);
-  const rarity = computeRarityScore(cookCount);
-  const season = computeSeasonScore(recipe.months);
-  const diversity = computeDiversityScore(recipeCategoryIds, recentCategoryIds);
-
-  const baseScore =
-    freshness * WEIGHTS.freshness +
-    rarity * WEIGHTS.rarity +
-    season * WEIGHTS.season +
-    diversity * WEIGHTS.diversity;
-
   return {
-    baseScore,
+    recipe,
     recipeCategoryIds,
     cookCount,
     lastCookedAt: lastDate,
+    freshness: computeFreshnessScore(lastDate),
+    diversity: computeDiversityScore(recipeCategoryIds, recentCategoryIds),
     reasons: {
       neverCooked: !lastDate,
-      inSeason: season === 1,
-      addsDiversity: diversity === 1 && recentCategoryIds.size > 0,
+      inSeason: true,
+      addsDiversity: computeDiversityScore(recipeCategoryIds, recentCategoryIds) === 1 && recentCategoryIds.size > 0,
     },
   };
 }
 
-// Selection gloutonne : a chaque tour, on prend le meilleur score restant
-// (score de base moins un malus pour les categories deja choisies dans le
-// lot), puis on penalise ses categories pour le tour suivant. Diversifie la
-// liste elle-meme, pas seulement par rapport a l'historique passe.
-function pickDiversifiedTopN(candidates, limit) {
+// Selection gloutonne : trie par popularite (cookCount desc), fraicheur en
+// departage, puis penalise a chaque tour les categories deja choisies pour
+// eviter une liste dominee par 2-3 categories.
+function orderByPopularityWithDiversity(candidates) {
   const remaining = [...candidates];
   const categoryPenalties = new Map();
-  const picked = [];
+  const ordered = [];
 
-  while (remaining.length && picked.length < limit) {
+  while (remaining.length) {
     let bestIndex = 0;
-    let bestAdjustedScore = -Infinity;
+    let bestRank = -Infinity;
 
     remaining.forEach((candidate, index) => {
       const penalty = candidate.recipeCategoryIds.reduce(
         (sum, categoryId) => sum + (categoryPenalties.get(categoryId) || 0),
         0
       );
-      const adjustedScore = candidate.baseScore - penalty;
-      if (adjustedScore > bestAdjustedScore) {
-        bestAdjustedScore = adjustedScore;
+      // cookCount domine le tri ; freshness ne sert qu'a departager a egalite.
+      const rank = candidate.cookCount * 1000 + candidate.freshness * 10 - penalty;
+      if (rank > bestRank) {
+        bestRank = rank;
         bestIndex = index;
       }
     });
 
     const [chosen] = remaining.splice(bestIndex, 1);
-    picked.push({ ...chosen, score: Math.round(bestAdjustedScore * 100) / 100 });
+    ordered.push(chosen);
     chosen.recipeCategoryIds.forEach((categoryId) => {
       categoryPenalties.set(categoryId, (categoryPenalties.get(categoryId) || 0) + INTRA_LIST_CATEGORY_PENALTY);
     });
   }
 
-  return picked;
+  return ordered;
 }
 
-async function computeRecipeSuggestions({ limit = 7, excludeRecipeIds = [] } = {}) {
-  const [{ data: recipes, error }, history, recentCategoryIds] = await Promise.all([
+// Liste (paginee, "infinie") des recettes de saison, triee de la plus a la
+// moins populaire, en excluant les recettes deja suggerees la semaine
+// precedente pour varier d'une semaine a l'autre.
+async function getSeasonalSuggestions({ page = 1, limit = 10 } = {}) {
+  const [{ data: recipes, error }, history, recentCategoryIds, previouslySuggestedIds] = await Promise.all([
     supabase
       .from('recipes')
       .select('id,title,image_url,prep_time,months,created_at,recipe_categories(category_id,categories(id,name,color))'),
     getCookHistoryMap(),
     getRecentCategoryIds(),
+    getPreviouslySuggestedRecipeIds(),
   ]);
 
   if (error) throw error;
 
-  const excluded = new Set(excludeRecipeIds);
+  const previouslySuggested = new Set(previouslySuggestedIds);
+
   const candidates = (recipes || [])
-    .filter((recipe) => !excluded.has(recipe.id) && !hasExcludedCategory(recipe))
-    .map((recipe) => ({
-      recipe,
-      ...scoreRecipe(recipe, { history, recentCategoryIds }),
-    }));
+    .filter((recipe) => isInSeason(recipe.months))
+    .filter((recipe) => !hasExcludedCategory(recipe))
+    .filter((recipe) => !previouslySuggested.has(recipe.id))
+    .map((recipe) => evaluateRecipe(recipe, { history, recentCategoryIds }));
 
-  return pickDiversifiedTopN(candidates, limit);
-}
+  const ordered = orderByPopularityWithDiversity(candidates);
 
-async function getStoredWeeklySuggestions(week) {
-  const { data, error } = await supabase
-    .from('weekly_suggestions')
-    .select('recipe_ids')
-    .eq('week', week)
-    .maybeSingle();
-
-  if (error) {
-    // Table absente ou non migree : on retombe sur le calcul a la volee.
-    if (error.code === '42P01' || /does not exist|schema cache/i.test(error.message || '')) {
-      return null;
-    }
-    throw error;
+  if (page === 1) {
+    await rememberThisWeekSuggestions(ordered.map((item) => item.recipe.id));
   }
 
-  return data?.recipe_ids || null;
-}
+  const offset = (page - 1) * limit;
+  const pageItems = ordered.slice(offset, offset + limit);
 
-async function storeWeeklySuggestions(week, recipeIds) {
-  const { error } = await supabase
-    .from('weekly_suggestions')
-    .upsert({ week, recipe_ids: recipeIds, created_at: new Date().toISOString() }, { onConflict: 'week' });
-
-  if (error && error.code !== '42P01' && !/does not exist|schema cache/i.test(error.message || '')) {
-    throw error;
-  }
-}
-
-async function hydrateSuggestionsFromIds(recipeIds, { history, recentCategoryIds }) {
-  if (!recipeIds.length) return [];
-
-  const { data: recipes, error } = await supabase
-    .from('recipes')
-    .select('id,title,image_url,prep_time,months,created_at,recipe_categories(category_id,categories(id,name,color))')
-    .in('id', recipeIds);
-
-  if (error) throw error;
-
-  const byId = new Map((recipes || []).map((recipe) => [recipe.id, recipe]));
-
-  return recipeIds
-    .map((id) => byId.get(id))
-    .filter((recipe) => recipe && !hasExcludedCategory(recipe))
-    .map((recipe) => {
-      const { baseScore, ...rest } = scoreRecipe(recipe, { history, recentCategoryIds });
-      return { recipe, score: Math.round(baseScore * 100) / 100, ...rest };
-    });
-}
-
-// Suggestions "de la semaine" : calculees une fois par semaine ISO puis
-// figees (stockees en base) pour rester stables jusqu'a la semaine suivante,
-// meme si l'historique du planning change entre-temps.
-async function getWeeklySuggestions({ week, limit = 7, excludeRecipeIds = [] } = {}) {
-  const targetWeek = isValidIsoWeek(week) ? week : getCurrentIsoWeek();
-
-  const storedIds = await getStoredWeeklySuggestions(targetWeek);
-  const [history, recentCategoryIds] = await Promise.all([getCookHistoryMap(), getRecentCategoryIds()]);
-
-  if (storedIds && storedIds.length) {
-    const hydrated = await hydrateSuggestionsFromIds(
-      storedIds.filter((id) => !excludeRecipeIds.includes(id)),
-      { history, recentCategoryIds }
-    );
-    if (hydrated.length) return { week: targetWeek, suggestions: hydrated };
-  }
-
-  const suggestions = await computeRecipeSuggestions({ limit, excludeRecipeIds });
-  await storeWeeklySuggestions(targetWeek, suggestions.map((s) => s.recipe.id));
-
-  return { week: targetWeek, suggestions };
+  return {
+    items: pageItems,
+    hasMore: offset + limit < ordered.length,
+    total: ordered.length,
+  };
 }
 
 module.exports = {
-  getWeeklySuggestions,
+  getSeasonalSuggestions,
   getCurrentIsoWeek,
-  // Exports internes utiles pour les tests / le debug.
-  computeFreshnessScore,
-  computeRarityScore,
-  computeSeasonScore,
-  computeDiversityScore,
 };
