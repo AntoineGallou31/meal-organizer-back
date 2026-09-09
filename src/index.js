@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const validateUUID = require('./middlewares/validateUUID');
+const blockWritesInDemo = require('./middlewares/blockWritesInDemo');
 
 const app = express();
 
@@ -32,9 +33,9 @@ app.get('/ping', (_req, res) => {
   res.send('pong');
 });
 
-app.use('/api', require('./routes/categories'));
-app.use('/api', require('./routes/recipes'));
-app.use('/api', require('./routes/mealPlan'));
+app.use('/api', blockWritesInDemo, require('./routes/categories'));
+app.use('/api', blockWritesInDemo, require('./routes/recipes'));
+app.use('/api', blockWritesInDemo, require('./routes/mealPlan'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

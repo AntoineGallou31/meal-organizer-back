@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const validateUUID = require('../src/middlewares/validateUUID');
+const blockWritesInDemo = require('../src/middlewares/blockWritesInDemo');
 
 const app = express();
 
@@ -32,8 +33,8 @@ app.get('/ping', (_req, res) => {
   res.send('pong');
 });
 
-app.use('/api', require('../src/routes/categories'));
-app.use('/api', require('../src/routes/recipes'));
-app.use('/api', require('../src/routes/mealPlan'));
+app.use('/api', blockWritesInDemo, require('../src/routes/categories'));
+app.use('/api', blockWritesInDemo, require('../src/routes/recipes'));
+app.use('/api', blockWritesInDemo, require('../src/routes/mealPlan'));
 
 module.exports = app;
