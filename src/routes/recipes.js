@@ -146,6 +146,32 @@ function getMissingImportFields(recipeData = {}) {
   return missing;
 }
 
+async function findRecipeByExactSourceUrl(sourceUrl) {
+  if (!sourceUrl) return null;
+
+  const { data, error } = await supabase
+    .from('recipes')
+    .select('id,title,source_url')
+    .eq('source_url', sourceUrl)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+function throwDuplicateImportError(existingRecipe) {
+  throw new APIError(
+    'Cette recette a deja ete importee',
+    409,
+    'DUPLICATE_IMPORTED_RECIPE',
+    {
+      existingRecipeId: existingRecipe.id,
+      title: existingRecipe.title,
+      sourceUrl: existingRecipe.source_url,
+    }
+  );
+}
+
 async function persistImportedRecipe({
   url,
   recipeData,
@@ -202,26 +228,9 @@ async function persistImportedRecipe({
     months,
   };
 
-  const { data: existingRecipe, error: duplicateCheckError } = await supabase
-    .from('recipes')
-    .select('id,title,source_url')
-    .eq('title', insertPayload.title)
-    .eq('source_url', insertPayload.source_url)
-    .maybeSingle();
-
-  if (duplicateCheckError) throw duplicateCheckError;
-
+  const existingRecipe = await findRecipeByExactSourceUrl(insertPayload.source_url);
   if (existingRecipe) {
-    throw new APIError(
-      'Une recette avec le meme nom et la meme URL existe deja',
-      409,
-      'DUPLICATE_IMPORTED_RECIPE',
-      {
-        existingRecipeId: existingRecipe.id,
-        title: existingRecipe.title,
-        sourceUrl: existingRecipe.source_url,
-      }
-    );
+    throwDuplicateImportError(existingRecipe);
   }
 
   const { data: inserted, error: insertError } = await supabase
@@ -649,6 +658,11 @@ router.post('/recipes/import', async (req, res) => {
   }
 
   try {
+    const existingRecipe = await findRecipeByExactSourceUrl(String(url).trim());
+    if (existingRecipe) {
+      throwDuplicateImportError(existingRecipe);
+    }
+
     const recipeData = await scrapeRecipe(url);
     const persisted = await persistImportedRecipe({
       url,
