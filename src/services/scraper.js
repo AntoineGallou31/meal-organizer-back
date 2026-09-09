@@ -118,11 +118,11 @@ async function fetchOgImage(url) {
     const html = extractHtmlFromResponseData(res.data).slice(0, 20000)
     const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)
-    if (ogMatch && ogMatch[1]) return ogMatch[1]
+    if (ogMatch && ogMatch[1]) return toAbsoluteImageUrl(ogMatch[1], url)
 
     const twMatch = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)
-    if (twMatch && twMatch[1]) return twMatch[1]
+    if (twMatch && twMatch[1]) return toAbsoluteImageUrl(twMatch[1], url)
   } catch {
     // no-op
   }
@@ -201,6 +201,15 @@ function extractImageUrl(image, fallbackUrl = null) {
   if (Array.isArray(image)) return extractImageUrl(image[0], fallbackUrl)
   if (typeof image === 'object') return image.url || image.contentUrl || image.thumbnailUrl || image.src || fallbackUrl
   return fallbackUrl
+}
+
+function toAbsoluteImageUrl(imageUrl, pageUrl) {
+  if (!imageUrl) return imageUrl
+  try {
+    return new URL(imageUrl, pageUrl).href
+  } catch {
+    return imageUrl
+  }
 }
 
 function extractServings(yieldVal) {
@@ -367,7 +376,7 @@ async function scrapeRecipe(rawUrl) {
 
   if (!result) {
     const fallbackTitle = $('h1').first().text().trim() || null
-    const fallbackImage = $('meta[property="og:image"]').attr('content') || null
+    const fallbackImage = toAbsoluteImageUrl($('meta[property="og:image"]').attr('content') || null, url)
     console.log(`[scraper] No parser matched. method=${method} title=${String(fallbackTitle)}`)
 
     return {
@@ -399,7 +408,10 @@ async function scrapeRecipe(rawUrl) {
   return {
     ...result,
     title: result.title || $('h1').first().text().trim() || 'Recette sans titre',
-    imageUrl: result.imageUrl || $('meta[property="og:image"]').attr('content') || await fetchOgImage(url) || null,
+    imageUrl: toAbsoluteImageUrl(result.imageUrl, url)
+      || toAbsoluteImageUrl($('meta[property="og:image"]').attr('content') || null, url)
+      || await fetchOgImage(url)
+      || null,
     sourceUrl: url,
     partial,
     scrapingMeta: {
