@@ -23,6 +23,35 @@ const RARITY_CAP_COUNT = 10;
 // lot de la semaine pour ses categories, afin de diversifier la selection.
 const INTRA_LIST_CATEGORY_PENALTY = 12;
 
+// Categories jamais proposees dans les suggestions de la semaine : ce ne
+// sont pas des plats de tous les jours (boissons, sucre, apero, condiments).
+const EXCLUDED_CATEGORY_NAMES = [
+  'cocktails',
+  'desserts',
+  'brunch',
+  'petit-dejeuner & brunch',
+  'aperitif',
+  'snacks & apero',
+  'sauces & condiments',
+];
+
+function normalizeCategoryName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
+
+const EXCLUDED_CATEGORY_NAME_SET = new Set(EXCLUDED_CATEGORY_NAMES.map(normalizeCategoryName));
+
+function hasExcludedCategory(recipe) {
+  return (recipe.recipe_categories || []).some((rc) => {
+    const name = rc.categories?.name;
+    return name && EXCLUDED_CATEGORY_NAME_SET.has(normalizeCategoryName(name));
+  });
+}
+
 function todayDateString() {
   return new Date().toISOString().split('T')[0];
 }
@@ -207,7 +236,7 @@ async function computeRecipeSuggestions({ limit = 7, excludeRecipeIds = [] } = {
 
   const excluded = new Set(excludeRecipeIds);
   const candidates = (recipes || [])
-    .filter((recipe) => !excluded.has(recipe.id))
+    .filter((recipe) => !excluded.has(recipe.id) && !hasExcludedCategory(recipe))
     .map((recipe) => ({
       recipe,
       ...scoreRecipe(recipe, { history, recentCategoryIds }),
@@ -258,7 +287,7 @@ async function hydrateSuggestionsFromIds(recipeIds, { history, recentCategoryIds
 
   return recipeIds
     .map((id) => byId.get(id))
-    .filter(Boolean)
+    .filter((recipe) => recipe && !hasExcludedCategory(recipe))
     .map((recipe) => {
       const { baseScore, ...rest } = scoreRecipe(recipe, { history, recentCategoryIds });
       return { recipe, score: Math.round(baseScore * 100) / 100, ...rest };
