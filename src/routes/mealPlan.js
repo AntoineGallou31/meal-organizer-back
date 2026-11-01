@@ -2,6 +2,7 @@ const { Router } = require('express');
 const supabase = require('../services/supabase');
 const { APIError, handleError } = require('../services/errorHandler');
 const { mapRecipeWithCategories } = require('../services/recipeMapper');
+const { toIsoWeek } = require('../services/recipeRecommendation');
 const router = Router();
 
 const SLOT_VALUES = ['lunch', 'dinner'];
@@ -9,11 +10,9 @@ const ITEM_TYPES = ['recipe', 'note'];
 
 const getWeekDays = (weekString) => {
     const [year, weekNum] = weekString.split('-W').map(Number);
-    const d = new Date(Date.UTC(year, 0, 1 + (weekNum - 1) * 7));
-    const day = d.getUTCDay() || 7; // Get day of week (1-7), Sunday is 7
-    if (day !== 1) {
-        d.setUTCDate(d.getUTCDate() - day + 1);
-    }
+    // La semaine ISO 1 est celle qui contient le 4 janvier : on part de son lundi.
+    const jan4Day = new Date(Date.UTC(year, 0, 4)).getUTCDay() || 7; // 1-7, dimanche = 7
+    const d = new Date(Date.UTC(year, 0, 4 - jan4Day + 1 + (weekNum - 1) * 7));
     const days = [];
     for (let i = 0; i < 7; i++) {
         const date = new Date(d);
@@ -91,15 +90,7 @@ const fetchMealPlanItemsWithSchemaFallback = async (weekDays) => {
 // GET /api/meal-plan?week=YYYY-Www
 router.get('/meal-plan', async (req, res) => {
     try {
-        let week = req.query.week;
-        if (!week) {
-            const today = new Date();
-            const year = today.getFullYear();
-            const firstDayOfYear = new Date(year, 0, 1);
-            const pastDaysOfYear = (today - firstDayOfYear) / 86400000;
-            const weekNum = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
-            week = `${year}-W${String(weekNum).padStart(2, '0')}`;
-        }
+        const week = req.query.week || toIsoWeek(new Date());
 
         const weekDays = getWeekDays(week);
         const mealPlanItems = (await fetchMealPlanItemsWithSchemaFallback(weekDays))
@@ -305,5 +296,5 @@ router.delete('/meal-plan/:date/:slot', async (req, res) => {
     }
 });
 
-
 module.exports = router;
+module.exports.getWeekDays = getWeekDays;

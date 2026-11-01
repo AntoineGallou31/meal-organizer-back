@@ -284,4 +284,5 @@ async function getSeasonalSuggestions({ page = 1, limit = 10 } = {}) {
 module.exports = {
   getSeasonalSuggestions,
   getCurrentIsoWeek,
+  toIsoWeek,
 };
