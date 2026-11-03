@@ -18,25 +18,39 @@ const router = Router();
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const STEP_ACTION_KEYWORDS = [
-  'melanger', 'mixer', 'fouetter', 'cuire', 'prechauffer', 'chauffer', 'faire revenir', 'rissoler',
-  'emincer', 'hacher', 'couper', 'ajouter', 'incorporer', 'laisser mijoter', 'mijoter', 'assaisonner',
-  'enfourner', 'battre', 'faire bouillir', 'egoutter', 'servir', 'verse', 'mix', 'bake', 'cook', 'stir',
-  'whisk', 'chop', 'add', 'boil', 'simmer',
+// Radicaux de verbes de cuisine, comparés en début de mot sur un texte sans accents :
+// « melang » reconnaît mélanger, mélangez, mélangeant...
+const STEP_ACTION_STEMS = [
+  'melang', 'mix', 'fouett', 'cuire', 'cuis', 'prechauff', 'chauff', 'revenir', 'rissol', 'eminc',
+  'hach', 'coup', 'ajout', 'incorpor', 'mijot', 'assaisonn', 'enfourn', 'batt', 'bouill', 'egoutt',
+  'serv', 'vers', 'laiss', 'mett', 'eplu', 'dispos', 'retir', 'remu', 'degust', 'reserv', 'etal',
+  'fai', 'fond', 'sal', 'poivr', 'decoup', 'tranch', 'rap', 'lav', 'pel', 'saupoudr', 'arros', 'plac',
+  'repart', 'bake', 'cook', 'stir', 'whisk', 'chop', 'add', 'boil', 'simmer',
 ];
+const STEP_ACTION_REGEX = new RegExp(`\\b(?:${STEP_ACTION_STEMS.join('|')})`);
+// Pour les ingrédients, seul un verbe conjugué (« émincez ») signale une étape égarée :
+// « 1 oignon à émincer » ou « 200 g de haddock » sont de vrais ingrédients.
+const INSTRUCTION_VERB_REGEX = new RegExp(
+  `\\b(?:${STEP_ACTION_STEMS.join('|')})[a-z]*ez\\b|^(?:add|mix|stir|whisk|chop|boil|simmer|bake|cook)\\b`
+);
 
 const CONTENT_NOISE_KEYWORDS = [
   'mentions legales', 'politique de confidentialite', 'conditions generales', 'cookie', 'newsletter',
   's inscrire', 'inscrivez vous', 'publicite', 'sponsorise', 'instagram', 'facebook', 'tiktok', 'linkedin',
-  'partager', 'commentaires', 'laisser un commentaire', 'accepter', 'refuser', 'consent', 'subscribe',
+  'partager', 'commentaires', 'laisser un commentaire', 'accepter', 'refuser', 'consent', 'consentement',
+  'subscribe',
 ];
 
-const UNIT_OR_QUANTITY_REGEX = /(\b\d+(?:[.,]\d+)?\b|\b\d+\s*\/\s*\d+\b|\b(?:g|kg|mg|ml|cl|l|cs|c\.s\.|cas|c\.a\.s\.|cac|c\.a\.c\.|cuillere|cuilleres|teaspoon|tbsp|tsp|cup|cups|oz|lb)s?\b)/i;
+// Ligne qui ressemble à un ingrédient, testée sur un texte sans accents :
+// - un nombre suivi d'une unité (« 200 g », « 20 cl », « 2 c. a s. ») ;
+// - ou une ligne qui commence par une quantité (« 2 oignons »), mais pas « 1. Préchauffez ».
+// Une unité seule ne compte pas : sinon le « l » de « l'ail » passait pour des litres.
+const INGREDIENT_QUANTITY_REGEX = /\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?\s*(?:kg|mg|g|gr|grammes?|ml|cl|dl|l|litres?|cs|cas|cac|c\.?\s*a\.?\s*[sc]\.?|cuilleres?|tbsp|tsp|cups?|oz|lbs?)(?![a-z])|^\d+(?:[.,/]\d+)?\s*[^\d\s.)-]/;
 
 function cleanLine(value) {
   return String(value || '')
     .replace(/<[^>]*>/g, ' ')
-    .replace(/\[[^\]]+\]\([^\)]+\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -83,9 +97,16 @@ function normalizeForComparison(value) {
     .trim();
 }
 
+// Compare des mots entiers : « cookie » ne doit pas exclure « cookies émiettés »
 function matchesAnyKeyword(value, keywords) {
-  const normalizedValue = normalizeForComparison(value);
-  return keywords.some((keyword) => normalizedValue.includes(normalizeForComparison(keyword)));
+  const normalizedValue = ` ${normalizeForComparison(value).replace(/[^a-z0-9]+/g, ' ')} `;
+  return keywords.some((keyword) => normalizedValue.includes(` ${normalizeForComparison(keyword)} `));
+}
+
+// Recettes lues dans les données structurées du site (JSON-LD) : déjà propres,
+// on ne fait que nettoyer les lignes, sans filtre par mots-clés.
+function cleanImportedLines(lines = []) {
+  return (Array.isArray(lines) ? lines : []).map(cleanLine).filter(Boolean);
 }
 
 function sanitizeImportedIngredients(ingredients = []) {
@@ -97,7 +118,7 @@ function sanitizeImportedIngredients(ingredients = []) {
     if (!ingredient) continue;
     if (/https?:\/\//i.test(ingredient)) continue;
     if (matchesAnyKeyword(ingredient, CONTENT_NOISE_KEYWORDS)) continue;
-    if (matchesAnyKeyword(ingredient, STEP_ACTION_KEYWORDS)) continue;
+    if (INSTRUCTION_VERB_REGEX.test(normalizeForComparison(ingredient))) continue;
 
     const normalized = normalizeForComparison(ingredient);
     if (seen.has(normalized)) continue;
@@ -119,8 +140,8 @@ function sanitizeImportedSteps(steps = []) {
     if (matchesAnyKeyword(step, CONTENT_NOISE_KEYWORDS)) continue;
 
     const normalized = normalizeForComparison(step);
-    const hasAction = matchesAnyKeyword(step, STEP_ACTION_KEYWORDS);
-    const hasQuantity = UNIT_OR_QUANTITY_REGEX.test(step);
+    const hasAction = STEP_ACTION_REGEX.test(normalized);
+    const hasQuantity = INGREDIENT_QUANTITY_REGEX.test(normalized);
 
     if (!hasAction && hasQuantity && normalized.split(/\s+/).length <= 8) continue;
     if (!hasAction && normalized.length < 12) continue;
@@ -207,10 +228,15 @@ async function persistImportedRecipe({
     };
   }
 
+  const fromStructuredData = normalizedRecipeData.scrapingMeta?.parser === 'JSON-LD';
   const preparedRecipeData = {
     ...normalizedRecipeData,
-    ingredients: sanitizeImportedIngredients(normalizedRecipeData.ingredients),
-    steps: sanitizeImportedSteps(normalizedRecipeData.steps),
+    ingredients: fromStructuredData
+      ? cleanImportedLines(normalizedRecipeData.ingredients)
+      : sanitizeImportedIngredients(normalizedRecipeData.ingredients),
+    steps: fromStructuredData
+      ? cleanImportedLines(normalizedRecipeData.steps)
+      : sanitizeImportedSteps(normalizedRecipeData.steps),
   };
 
   const importedIngredients = Array.isArray(preparedRecipeData.ingredients) ? preparedRecipeData.ingredients : [];
