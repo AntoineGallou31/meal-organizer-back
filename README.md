@@ -19,7 +19,7 @@ Pensée à l'origine pour un usage personnel (à deux), l'app automatise ce qui 
 - **Import automatique par URL** — colle un lien depuis n'importe quel site de recette, le backend scrape la page en priorisant le format structuré `schema.org` / JSON-LD, avec repli sur des heuristiques CSS et mots-clés en français si besoin. Titre, image, ingrédients, étapes et temps de préparation sont extraits automatiquement.
 - **Détection de doublons** — refuse l'import si l'URL a déjà été utilisée.
 - **Import partiel avec confirmation** — si des champs sont manquants, l'app propose de forcer l'import plutôt que d'échouer silencieusement.
-- **Catégorisation automatique** par moteur de mots-clés (titre + ingrédients).
+- **Catégorisation automatique** par mots-clés cherchés dans le titre : le premier mot-clé du titre décide.
 - **Détection de saisonnalité** — croise les ingrédients avec un calendrier français des produits de saison pour tagger les mois pertinents.
 - **Scaler de portions** avec recalcul des quantités, gestion des fractions unicode (½ ⅓ ¼).
 - Fiche recette détaillée, recettes similaires suggérées, compteur "cuisinée X fois", édition manuelle.

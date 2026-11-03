@@ -1,19 +1,11 @@
 const supabase = require('./supabase');
+const { classifyTitle } = require('./categoryMatcher');
 
-function normalizeText(value) {
-  return String(value || '').toLowerCase();
-}
-
-function normalizeKeywords(keywords) {
-  if (!Array.isArray(keywords)) return [];
-  return [...new Set(
-    keywords
-      .map((k) => String(k).trim().toLowerCase())
-      .filter(Boolean)
-  )];
-}
-
-async function detectCategory(title, ingredients) {
+// Categorie d'une recette d'apres les mots-cles trouves dans son titre
+// (regles dans categoryMatcher.js). Sans mot-cle reconnu : la categorie par
+// defaut, avec confident a false. Les ingredients ne sont plus pris en compte ;
+// le parametre reste pour ne pas changer la signature.
+async function detectCategory(title, _ingredients) {
   const { data: categories, error } = await supabase
     .from('categories')
     .select('id, name, keywords, is_default');
@@ -23,47 +15,11 @@ async function detectCategory(title, ingredients) {
     throw new Error('Aucune categorie disponible');
   }
 
-  const defaultCategory = categories.find((c) => c.is_default) || categories[0];
-  const normalizedTitle = normalizeText(title);
-  const ingredientText = Array.isArray(ingredients)
-    ? ingredients.map((item) => String(item)).join(' ')
-    : '';
-  const fullText = `${normalizedTitle} ${normalizedTitle} ${normalizeText(ingredientText)}`;
-
-  let bestCategory = null;
-  let bestScore = 0;
-
-  for (const category of categories) {
-    if (category.is_default) continue;
-
-    const keywords = normalizeKeywords(category.keywords);
-    if (!keywords.length) continue;
-
-    let score = 0;
-    for (const keyword of keywords) {
-      if (fullText.includes(keyword)) {
-        score += normalizedTitle.includes(keyword) ? 2 : 1;
-      }
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestCategory = category;
-    }
-  }
-
-  if (!bestCategory || bestScore <= 0) {
-    return {
-      id: defaultCategory.id,
-      name: defaultCategory.name,
-      confident: false,
-    };
-  }
-
+  const { category, confident } = classifyTitle(title, categories);
   return {
-    id: bestCategory.id,
-    name: bestCategory.name,
-    confident: true,
+    id: category.id,
+    name: category.name,
+    confident,
   };
 }
 

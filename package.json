@@ -9,7 +9,8 @@
     "start": "node src/index.js",
     "vercel-build": "echo \"No build step required\"",
     "seed": "node src/scripts/seedCategories.js",
-    "check:weeks": "node src/scripts/checkIsoWeeks.js"
+    "check:weeks": "node src/scripts/checkIsoWeeks.js",
+    "check:categorizer": "node src/scripts/checkCategorizer.js"
   },
   "keywords": [],
   "author": "",
