@@ -466,6 +466,19 @@ router.get('/recipes', async (req, res) => {
     }
 
     const sortByPopularity = sort === 'popular';
+    // includeCookCount=true : chaque recette porte cookCount, quel que soit le tri
+    const includeCookCount = req.query.includeCookCount === 'true';
+    // cooked=never : seulement les recettes jamais planifiees a une date passee
+    const neverCooked = req.query.cooked === 'never';
+    const cookCountMap = sortByPopularity || includeCookCount || neverCooked ? await getCookCountMap() : null;
+
+    // Exclusion faite dans la requete, avant la pagination, pour que les pages restent justes
+    if (neverCooked) {
+      const cookedIds = Object.keys(cookCountMap);
+      if (cookedIds.length) {
+        query = query.not('id', 'in', `(${cookedIds.join(',')})`);
+      }
+    }
 
     if (sort === 'oldest') {
       query = query.order('created_at', { ascending: true });
@@ -482,10 +495,7 @@ router.get('/recipes', async (req, res) => {
       query = query.range(offset, offset + limit);
     }
 
-    const [{ data, error }, cookCountMap] = await Promise.all([
-      query,
-      sortByPopularity ? getCookCountMap() : Promise.resolve(null),
-    ]);
+    const { data, error } = await query;
     if (error) {
       throw new APIError(
         'Impossible de récupérer les recettes',
