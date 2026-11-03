@@ -11,6 +11,7 @@ const { detectMonthsFromIngredients } = require('../services/ingredientMonths');
 const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const { getCookCountMap, getCookCountForRecipe } = require('../services/recipePopularity');
 const { getSeasonalSuggestions, isValidDateString } = require('../services/recipeRecommendation');
+const { getRecipeStats } = require('../services/recipeStats');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
@@ -534,6 +535,16 @@ router.get('/recipes', async (req, res) => {
     res.json(visibleRecipes.map(toResponse));
   } catch (error) {
     handleError(error, res, { endpoint: 'GET /api/recipes' });
+  }
+});
+
+// GET /api/recipes/stats : { total, seasonal, favorites, toComplete, suggestions }
+// Declaree avant /recipes/:id, sinon "stats" serait pris pour un id.
+router.get('/recipes/stats', async (req, res) => {
+  try {
+    res.json(await getRecipeStats());
+  } catch (error) {
+    handleError(error, res, { endpoint: 'GET /api/recipes/stats' });
   }
 });
 
