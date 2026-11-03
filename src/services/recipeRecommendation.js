@@ -1,4 +1,5 @@
 const supabase = require('./supabase');
+const { getNonMealReason } = require('./mealCategories');
 
 const MONTH_NAMES = [
   'Janvier', 'Fevrier', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -14,35 +15,6 @@ const RECENT_MEALS_WINDOW = 5;
 const INTRA_LIST_CATEGORY_PENALTY = 3;
 // Nombre d'ids memorises par semaine pour pouvoir les exclure la semaine suivante.
 const REMEMBERED_SUGGESTIONS_COUNT = 30;
-
-// Categories jamais proposees dans les suggestions : ce ne sont pas des
-// plats de tous les jours (boissons, sucre, apero, condiments).
-const EXCLUDED_CATEGORY_NAMES = [
-  'cocktails',
-  'desserts',
-  'brunch',
-  'petit-dejeuner & brunch',
-  'aperitif',
-  'snacks & apero',
-  'sauces & condiments',
-];
-
-function normalizeCategoryName(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim();
-}
-
-const EXCLUDED_CATEGORY_NAME_SET = new Set(EXCLUDED_CATEGORY_NAMES.map(normalizeCategoryName));
-
-function hasExcludedCategory(recipe) {
-  return (recipe.recipe_categories || []).some((rc) => {
-    const name = rc.categories?.name;
-    return name && EXCLUDED_CATEGORY_NAME_SET.has(normalizeCategoryName(name));
-  });
-}
 
 function todayDateString() {
   return new Date().toISOString().split('T')[0];
@@ -184,6 +156,29 @@ function isInSeason(months) {
   return Array.isArray(months) && months.includes(getCurrentMonthName());
 }
 
+// Toutes les categories, avec is_default, lues a part pour ne pas changer la
+// forme des recettes renvoyees par l'API.
+async function getCategoryMap() {
+  const { data, error } = await supabase.from('categories').select('id,name,is_default');
+  if (error) throw error;
+  return new Map((data || []).map((category) => [category.id, category]));
+}
+
+function getRecipeCategories(recipe, categoryMap) {
+  return (recipe.recipe_categories || [])
+    .map((link) => categoryMap.get(link.category_id))
+    .filter(Boolean);
+}
+
+// Motif pour lequel une recette n'est pas suggeree, ou null si elle l'est :
+// pas un plat (voir mealCategories.js), puis hors saison.
+function getExclusionReason(recipe, { categoryMap }) {
+  return (
+    getNonMealReason(recipe.title, getRecipeCategories(recipe, categoryMap)) ||
+    (isInSeason(recipe.months) ? null : 'outOfSeason')
+  );
+}
+
 function evaluateRecipe(recipe, { history, recentCategoryIds }) {
   const entry = history[recipe.id];
   const cookCount = entry?.count || 0;
@@ -246,13 +241,14 @@ function orderByPopularityWithDiversity(candidates) {
 // moins populaire, en excluant les recettes deja suggerees la semaine
 // precedente pour varier d'une semaine a l'autre.
 async function getSeasonalSuggestions({ page = 1, limit = 10 } = {}) {
-  const [{ data: recipes, error }, history, recentCategoryIds, previouslySuggestedIds] = await Promise.all([
+  const [{ data: recipes, error }, history, recentCategoryIds, previouslySuggestedIds, categoryMap] = await Promise.all([
     supabase
       .from('recipes')
       .select('id,title,image_url,prep_time,months,created_at,recipe_categories(category_id,categories(id,name,color))'),
     getCookHistoryMap(),
     getRecentCategoryIds(),
     getPreviouslySuggestedRecipeIds(),
+    getCategoryMap(),
   ]);
 
   if (error) throw error;
@@ -260,8 +256,7 @@ async function getSeasonalSuggestions({ page = 1, limit = 10 } = {}) {
   const previouslySuggested = new Set(previouslySuggestedIds);
 
   const candidates = (recipes || [])
-    .filter((recipe) => isInSeason(recipe.months))
-    .filter((recipe) => !hasExcludedCategory(recipe))
+    .filter((recipe) => !getExclusionReason(recipe, { categoryMap }))
     .filter((recipe) => !previouslySuggested.has(recipe.id))
     .map((recipe) => evaluateRecipe(recipe, { history, recentCategoryIds }));
 
