@@ -13,8 +13,6 @@ const RECENT_MEALS_WINDOW = 5;
 // Malus applique (en points de score) a chaque recette deja retenue dans le
 // lot pour ses categories, afin de diversifier la selection.
 const INTRA_LIST_CATEGORY_PENALTY = 3;
-// Nombre d'ids memorises par semaine pour pouvoir les exclure la semaine suivante.
-const REMEMBERED_SUGGESTIONS_COUNT = 30;
 
 function todayDateString() {
   return new Date().toISOString().split('T')[0];
@@ -41,14 +39,58 @@ function toIsoWeek(date) {
   return `${target.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
-function getCurrentIsoWeek() {
-  return toIsoWeek(new Date());
+// Date du jour a Paris (YYYY-MM-DD), et non en UTC : juste apres minuit,
+// Paris est deja le lendemain.
+function getParisToday() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
-function getPreviousIsoWeek() {
-  const now = new Date();
-  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  return toIsoWeek(oneWeekAgo);
+function isValidDateString(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function addDays(dateString, days) {
+  const date = new Date(`${dateString}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+// Lundi de la semaine precedente, lundi et dimanche de la semaine de `dateString`.
+function getWeekBounds(dateString) {
+  const weekday = new Date(`${dateString}T00:00:00Z`).getUTCDay(); // 0 = dimanche
+  const monday = addDays(dateString, -((weekday + 6) % 7));
+  return { previousMonday: addDays(monday, -7), monday, sunday: addDays(monday, 6) };
+}
+
+// Recettes au menu entre le lundi de la semaine precedente et le dimanche de la
+// semaine de reference, bornes incluses : faites la semaine derniere, ou deja
+// prevues cette semaine. Renvoie id -> motif (la semaine derniere l'emporte).
+async function getRecentlyPlannedRecipes(referenceDate) {
+  const { previousMonday, monday, sunday } = getWeekBounds(referenceDate);
+  const { data, error } = await supabase
+    .from('meal_plan_items')
+    .select('recipe_id,date')
+    .eq('type', 'recipe')
+    .not('recipe_id', 'is', null)
+    .gte('date', previousMonday)
+    .lte('date', sunday);
+
+  if (error) throw error;
+
+  const reasons = new Map();
+  for (const row of data || []) {
+    if (reasons.get(row.recipe_id) === 'cookedLastWeek') continue;
+    reasons.set(row.recipe_id, row.date < monday ? 'cookedLastWeek' : 'plannedThisWeek');
+  }
+
+  return reasons;
 }
 
 // Historique des recettes deja planifiees a une date passee : pour chacune,
@@ -101,43 +143,6 @@ async function getRecentCategoryIds(limit = RECENT_MEALS_WINDOW) {
   return categoryIds;
 }
 
-// Ids suggeres la semaine ISO precedente, pour ne pas reproposer les memes
-// recettes deux semaines de suite. Retombe sur une liste vide si la table
-// n'existe pas encore (avant migration) ou si rien n'a ete enregistre.
-async function getPreviouslySuggestedRecipeIds() {
-  const { data, error } = await supabase
-    .from('weekly_suggestions')
-    .select('recipe_ids')
-    .eq('week', getPreviousIsoWeek())
-    .maybeSingle();
-
-  if (error) {
-    if (error.code === '42P01' || /does not exist|schema cache/i.test(error.message || '')) {
-      return [];
-    }
-    throw error;
-  }
-
-  return data?.recipe_ids || [];
-}
-
-async function rememberThisWeekSuggestions(recipeIds) {
-  const { error } = await supabase
-    .from('weekly_suggestions')
-    .upsert(
-      {
-        week: getCurrentIsoWeek(),
-        recipe_ids: recipeIds.slice(0, REMEMBERED_SUGGESTIONS_COUNT),
-        created_at: new Date().toISOString(),
-      },
-      { onConflict: 'week' }
-    );
-
-  if (error && error.code !== '42P01' && !/does not exist|schema cache/i.test(error.message || '')) {
-    throw error;
-  }
-}
-
 function computeFreshnessScore(lastDate) {
   if (!lastDate) return 1; // jamais cuisinee = fraicheur maximale
   const daysSince = daysBetween(todayDateString(), lastDate);
@@ -171,10 +176,12 @@ function getRecipeCategories(recipe, categoryMap) {
 }
 
 // Motif pour lequel une recette n'est pas suggeree, ou null si elle l'est :
-// pas un plat (voir mealCategories.js), puis hors saison.
-function getExclusionReason(recipe, { categoryMap }) {
+// pas un plat (voir mealCategories.js), au menu la semaine derniere ou cette
+// semaine, puis hors saison.
+function getExclusionReason(recipe, { categoryMap, recentlyPlanned }) {
   return (
     getNonMealReason(recipe.title, getRecipeCategories(recipe, categoryMap)) ||
+    recentlyPlanned.get(recipe.id) ||
     (isInSeason(recipe.months) ? null : 'outOfSeason')
   );
 }
@@ -237,34 +244,36 @@ function orderByPopularityWithDiversity(candidates) {
   return ordered;
 }
 
-// Liste (paginee, "infinie") des recettes de saison, triee de la plus a la
-// moins populaire, en excluant les recettes deja suggerees la semaine
-// precedente pour varier d'une semaine a l'autre.
-async function getSeasonalSuggestions({ page = 1, limit = 10 } = {}) {
-  const [{ data: recipes, error }, history, recentCategoryIds, previouslySuggestedIds, categoryMap] = await Promise.all([
+// Tout ce qu'il faut pour decider et classer les suggestions d'une semaine de
+// reference (`date`, YYYY-MM-DD ; par defaut aujourd'hui a Paris).
+async function loadSuggestionContext({ date } = {}) {
+  const referenceDate = date || getParisToday();
+  const [{ data: recipes, error }, history, recentCategoryIds, categoryMap, recentlyPlanned] = await Promise.all([
     supabase
       .from('recipes')
       .select('id,title,image_url,prep_time,months,created_at,recipe_categories(category_id,categories(id,name,color))'),
     getCookHistoryMap(),
     getRecentCategoryIds(),
-    getPreviouslySuggestedRecipeIds(),
     getCategoryMap(),
+    getRecentlyPlannedRecipes(referenceDate),
   ]);
 
   if (error) throw error;
 
-  const previouslySuggested = new Set(previouslySuggestedIds);
+  return { referenceDate, recipes: recipes || [], history, recentCategoryIds, categoryMap, recentlyPlanned };
+}
 
-  const candidates = (recipes || [])
-    .filter((recipe) => !getExclusionReason(recipe, { categoryMap }))
-    .filter((recipe) => !previouslySuggested.has(recipe.id))
-    .map((recipe) => evaluateRecipe(recipe, { history, recentCategoryIds }));
+// Liste (paginee, "infinie") des plats de saison, triee de la plus a la moins
+// populaire, sans ceux au menu la semaine precedente ou la semaine de reference.
+// Les exclusions sont faites avant la pagination.
+async function getSeasonalSuggestions({ page = 1, limit = 10, date } = {}) {
+  const context = await loadSuggestionContext({ date });
+
+  const candidates = context.recipes
+    .filter((recipe) => !getExclusionReason(recipe, context))
+    .map((recipe) => evaluateRecipe(recipe, context));
 
   const ordered = orderByPopularityWithDiversity(candidates);
-
-  if (page === 1) {
-    await rememberThisWeekSuggestions(ordered.map((item) => item.recipe.id));
-  }
 
   const offset = (page - 1) * limit;
   const pageItems = ordered.slice(offset, offset + limit);
@@ -278,6 +287,10 @@ async function getSeasonalSuggestions({ page = 1, limit = 10 } = {}) {
 
 module.exports = {
   getSeasonalSuggestions,
-  getCurrentIsoWeek,
+  loadSuggestionContext,
+  getExclusionReason,
+  getWeekBounds,
+  getParisToday,
+  isValidDateString,
   toIsoWeek,
 };

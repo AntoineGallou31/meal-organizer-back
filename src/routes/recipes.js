@@ -10,7 +10,7 @@ const {
 const { detectMonthsFromIngredients } = require('../services/ingredientMonths');
 const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const { getCookCountMap, getCookCountForRecipe } = require('../services/recipePopularity');
-const { getSeasonalSuggestions } = require('../services/recipeRecommendation');
+const { getSeasonalSuggestions, isValidDateString } = require('../services/recipeRecommendation');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
@@ -532,8 +532,13 @@ router.get('/recipes/suggestions', async (req, res) => {
   try {
     const page = parsePositiveInteger(req.query.page, 1);
     const limit = parsePositiveInteger(req.query.limit, 10);
+    // Semaine de reference (optionnelle) : sans elle, celle d'aujourd'hui a Paris
+    const { date } = req.query;
+    if (date !== undefined && !isValidDateString(date)) {
+      throw new APIError('Le paramètre date doit être une date valide au format YYYY-MM-DD', 400, 'INVALID_DATE');
+    }
 
-    const { items, hasMore } = await getSeasonalSuggestions({ page, limit });
+    const { items, hasMore } = await getSeasonalSuggestions({ page, limit, date });
 
     res.json({
       page,
