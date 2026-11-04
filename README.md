@@ -107,6 +107,12 @@ npm run dev
 
 ---
 
+## 📚 Sources de données
+
+- Valeurs nutritionnelles : table de composition [Ciqual](https://ciqual.anses.fr/), Anses (version 2025).
+
+---
+
 ## 👤 Auteur
 
 **Antoine Gallou**

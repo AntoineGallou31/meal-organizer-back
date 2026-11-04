@@ -15,5 +15,8 @@
 *.zip
 .env
 backups/
+# Fichiers sources volumineux (table Ciqual...) : à la racine seulement,
+# src/scripts/data/ reste suivi
+/data/
 src/scripts/data/categories-review.json
 src/scripts/data/categories-decisions.json
