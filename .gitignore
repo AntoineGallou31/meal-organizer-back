@@ -15,3 +15,5 @@
 *.zip
 .env
 backups/
+src/scripts/data/categories-review.json
+src/scripts/data/categories-decisions.json
