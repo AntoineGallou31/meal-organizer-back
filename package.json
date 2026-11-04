@@ -10,7 +10,8 @@
     "vercel-build": "echo \"No build step required\"",
     "seed": "node src/scripts/seedCategories.js",
     "check:weeks": "node src/scripts/checkIsoWeeks.js",
-    "check:categorizer": "node src/scripts/checkCategorizer.js"
+    "check:categorizer": "node src/scripts/checkCategorizer.js",
+    "check:parser": "node src/scripts/checkIngredientParser.js"
   },
   "keywords": [],
   "author": "",
