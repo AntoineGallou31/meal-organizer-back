@@ -17,6 +17,7 @@ const {
 
 // Ordre des motifs : une recette est comptee sous le premier qui s'applique.
 const REASONS = [
+  ['incomplete', 'sans ingredients ou sans etapes'],
   ['nonMealCategory', 'categorie hors plat'],
   ['noMealCategory', 'sans categorie de plat'],
   ['sweetTitle', 'titre sucre ou boisson'],

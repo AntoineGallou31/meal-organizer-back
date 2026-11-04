@@ -1,5 +1,6 @@
 const supabase = require('./supabase');
 const { getNonMealReason } = require('./mealCategories');
+const { getIncompleteRecipeIds } = require('./recipeCompleteness');
 
 const MONTH_NAMES = [
   'Janvier', 'Fevrier', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -176,10 +177,11 @@ function getRecipeCategories(recipe, categoryMap) {
 }
 
 // Motif pour lequel une recette n'est pas suggeree, ou null si elle l'est :
-// pas un plat (voir mealCategories.js), au menu la semaine derniere ou cette
-// semaine, puis hors saison.
-function getExclusionReason(recipe, { categoryMap, recentlyPlanned }) {
+// incomplete (sans ingredients ou sans etapes), pas un plat (voir
+// mealCategories.js), au menu la semaine derniere ou cette semaine, puis hors saison.
+function getExclusionReason(recipe, { categoryMap, recentlyPlanned, incompleteRecipeIds }) {
   return (
+    (incompleteRecipeIds.has(recipe.id) ? 'incomplete' : null) ||
     getNonMealReason(recipe.title, getRecipeCategories(recipe, categoryMap)) ||
     recentlyPlanned.get(recipe.id) ||
     (isInSeason(recipe.months) ? null : 'outOfSeason')
@@ -248,7 +250,14 @@ function orderByPopularityWithDiversity(candidates) {
 // reference (`date`, YYYY-MM-DD ; par defaut aujourd'hui a Paris).
 async function loadSuggestionContext({ date } = {}) {
   const referenceDate = date || getParisToday();
-  const [{ data: recipes, error }, history, recentCategoryIds, categoryMap, recentlyPlanned] = await Promise.all([
+  const [
+    { data: recipes, error },
+    history,
+    recentCategoryIds,
+    categoryMap,
+    recentlyPlanned,
+    incompleteRecipeIds,
+  ] = await Promise.all([
     supabase
       .from('recipes')
       .select('id,title,image_url,prep_time,months,created_at,recipe_categories(category_id,categories(id,name,color))'),
@@ -256,11 +265,20 @@ async function loadSuggestionContext({ date } = {}) {
     getRecentCategoryIds(),
     getCategoryMap(),
     getRecentlyPlannedRecipes(referenceDate),
+    getIncompleteRecipeIds(),
   ]);
 
   if (error) throw error;
 
-  return { referenceDate, recipes: recipes || [], history, recentCategoryIds, categoryMap, recentlyPlanned };
+  return {
+    referenceDate,
+    recipes: recipes || [],
+    history,
+    recentCategoryIds,
+    categoryMap,
+    recentlyPlanned,
+    incompleteRecipeIds,
+  };
 }
 
 // Liste (paginee, "infinie") des plats de saison, triee de la plus a la moins

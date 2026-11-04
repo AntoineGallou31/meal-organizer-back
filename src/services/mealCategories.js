@@ -2,16 +2,13 @@
 // Les listes ci-dessous sont a modifier librement. Elles sont comparees apres
 // normalisation : minuscules, sans accents.
 
-// Categories hors plat, par nom exact (classement valide a la main + recettes incompletes).
+// Categories hors plat, par nom exact (voir scripts/data/categories.js).
+// Les recettes incompletes sont exclues a part (recipeCompleteness.js).
 const NON_MEAL_CATEGORY_NAMES = [
-  'a completer',
-  'aperitif',
-  'brunch',
-  'cocktails',
-  'desserts',
-  'petit-dejeuner & brunch',
-  'sauces & condiments',
-  'snacks & apero',
+  'Desserts',
+  'Apéro & entrées',
+  'Boissons & cocktails',
+  'Petit-déjeuner & brunch',
 ];
 
 // Toute categorie dont le nom contient l'un de ces mots est hors plat,

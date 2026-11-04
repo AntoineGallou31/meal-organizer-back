@@ -26,7 +26,7 @@ Pensée à l'origine pour un usage personnel (à deux), l'app automatise ce qui 
 
 ### 📋 Bibliothèque
 - Grille en scroll infini, recherche texte, filtres (catégorie, ingrédient, mois/saison, temps de prépa max), tri multiple.
-- Masquage automatique des recettes incomplètes.
+- Filtre des recettes incomplètes (sans ingrédients ou sans étapes), exclues des suggestions.
 
 ### 🧠 Suggestions intelligentes
 Feed généré à partir de la saisonnalité, de la popularité réelle (déduite de l'historique du planning), d'une pénalité de diversité pour éviter les répétitions de catégories, et d'exclusions (desserts/boissons/snacks, recettes déjà suggérées la semaine précédente).

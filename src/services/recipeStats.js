@@ -1,5 +1,7 @@
 const supabase = require('./supabase');
 const { getParisToday, getSeasonalSuggestions } = require('./recipeRecommendation');
+// toComplete : recettes sans ingredients ou sans etapes (meme filtre que GET /api/recipes?incomplete=true)
+const { countIncompleteRecipes } = require('./recipeCompleteness');
 
 const MONTH_NAMES = [
   'Janvier', 'Fevrier', 'Mars', 'Avril', 'Mai', 'Juin',
@@ -45,24 +47,6 @@ async function countFavoriteRecipes() {
     if (isMissingColumnError(error)) return 0;
     throw error;
   }
-  return count || 0;
-}
-
-// Recettes de la categorie "A completer" (meme recherche que GET /api/recipes)
-async function countIncompleteRecipes() {
-  const { data: category, error } = await supabase
-    .from('categories')
-    .select('id')
-    .ilike('name', 'A completer')
-    .maybeSingle();
-  if (error) throw error;
-  if (!category) return 0;
-
-  const { count, error: countError } = await supabase
-    .from('recipe_categories')
-    .select('recipe_id', { count: 'exact', head: true })
-    .eq('category_id', category.id);
-  if (countError) throw countError;
   return count || 0;
 }
 

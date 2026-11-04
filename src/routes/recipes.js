@@ -12,6 +12,7 @@ const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const { getCookCountMap, getCookCountForRecipe } = require('../services/recipePopularity');
 const { getSeasonalSuggestions, isValidDateString } = require('../services/recipeRecommendation');
 const { getRecipeStats } = require('../services/recipeStats');
+const { onlyIncompleteRecipes } = require('../services/recipeCompleteness');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
@@ -432,6 +433,8 @@ router.get('/recipes', async (req, res) => {
     const limit = parsePositiveInteger(req.query.limit, 24);
     const summary = req.query.summary === 'true' || req.query.summary === true || req.query.summary === '1';
     const paged = req.query.page !== undefined || req.query.limit !== undefined || summary;
+    // incomplete=true : seulement les recettes sans ingredients ou sans etapes
+    const incomplete = req.query.incomplete === 'true';
 
     // Validation
     if (categoryId && !UUID_REGEX.test(categoryId)) {
@@ -452,27 +455,6 @@ router.get('/recipes', async (req, res) => {
       }
     }
 
-    let hiddenIncompleteRecipeIds = [];
-    if (!search) {
-      const { data: incompleteCategory, error: incompleteCategoryError } = await supabase
-        .from('categories')
-        .select('id')
-        .ilike('name', 'A completer')
-        .maybeSingle();
-
-      if (incompleteCategoryError) throw incompleteCategoryError;
-
-      if (incompleteCategory?.id && categoryId !== incompleteCategory.id) {
-        const { data: incompleteLinks, error: incompleteLinksError } = await supabase
-          .from('recipe_categories')
-          .select('recipe_id')
-          .eq('category_id', incompleteCategory.id);
-
-        if (incompleteLinksError) throw incompleteLinksError;
-        hiddenIncompleteRecipeIds = [...new Set((incompleteLinks || []).map((row) => row.recipe_id).filter(Boolean))];
-      }
-    }
-
     const selectString = buildRecipeSelectString({ summary: paged, categoryId });
     let query = supabase.from('recipes').select(selectString);
 
@@ -490,6 +472,9 @@ router.get('/recipes', async (req, res) => {
     }
     if (ingredientFilteredIds) {
       query = query.in('id', ingredientFilteredIds);
+    }
+    if (incomplete) {
+      query = onlyIncompleteRecipes(query);
     }
 
     const sortByPopularity = sort === 'popular';
@@ -531,9 +516,7 @@ router.get('/recipes', async (req, res) => {
         { supabaseError: error.message }
       );
     }
-    let visibleRecipes = hiddenIncompleteRecipeIds.length
-      ? (data || []).filter((recipe) => !hiddenIncompleteRecipeIds.includes(recipe.id))
-      : (data || []);
+    let visibleRecipes = data || [];
 
     if (sortByPopularity) {
       visibleRecipes = [...visibleRecipes].sort(

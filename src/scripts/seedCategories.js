@@ -1,188 +1,15 @@
+// Cree les categories de reference (data/categories.js) absentes de la base, avec
+// leurs couleurs et leurs mots-cles, puis fait de « Sans catégorie » la seule
+// categorie par defaut. Une categorie deja presente (meme nom, sans tenir compte
+// de la casse ni des accents) n'est pas modifiee.
+// Usage : npm run seed
 require('dotenv').config();
 const supabase = require('../services/supabase');
+const { normalizeForMatching } = require('../services/categoryMatcher');
+const SEED_CATEGORIES = require('./data/categories');
 
-const SEED_CATEGORIES = [
-  {
-    name: 'Agneau',
-    color: '#EF4444',
-    is_default: false,
-    keywords: ['agneau', 'lamb'],
-  },
-  {
-    name: 'Apéritif',
-    color: '#F59E0B',
-    is_default: false,
-    keywords: ['apéritif', 'apero', 'tapas', 'snack', 'entrée'],
-  },
-  {
-    name: 'Assiettes complètes',
-    color: '#10B981',
-    is_default: false,
-    keywords: [],
-  },
-  {
-    name: 'Sans catégorie',
-    color: '#9CA3AF',
-    is_default: true,
-    keywords: [],
-  },
-  {
-    name: 'Boeuf',
-    color: '#DC2626',
-    is_default: false,
-    keywords: ['boeuf', 'bœuf', 'beef', 'steak'],
-  },
-  {
-    name: 'Boulgour',
-    color: '#D97706',
-    is_default: false,
-    keywords: ['boulgour', 'bulgur'],
-  },
-  {
-    name: 'Brunch',
-    color: '#F59E0B',
-    is_default: false,
-    keywords: ['brunch', 'petit déjeuner', 'eggs', 'bacon'],
-  },
-  {
-    name: 'Burgers',
-    color: '#DC2626',
-    is_default: false,
-    keywords: ['burger', 'hamburger'],
-  },
-  {
-    name: 'Cakes',
-    color: '#EC4899',
-    is_default: false,
-    keywords: ['cake', 'gâteau', 'gateau'],
-  },
-  {
-    name: 'Clafoutis salés',
-    color: '#8B5CF6',
-    is_default: false,
-    keywords: ['clafoutis', 'salé'],
-  },
-  {
-    name: 'Cocktails',
-    color: '#06B6D4',
-    is_default: false,
-    keywords: ['cocktail', 'drink', 'alcool', 'aperitif'],
-  },
-  {
-    name: 'Croques Monsieur',
-    color: '#EA580C',
-    is_default: false,
-    keywords: ['croque', 'sandwich'],
-  },
-  {
-    name: 'Dahl et curry',
-    color: '#F97316',
-    is_default: false,
-    keywords: ['dahl', 'dal', 'curry', 'spice'],
-  },
-  {
-    name: 'Desserts',
-    color: '#EC4899',
-    is_default: false,
-    keywords: ['gâteau', 'gateau', 'tarte', 'dessert', 'sucré'],
-  },
-  {
-    name: 'Gnocchis',
-    color: '#F59E0B',
-    is_default: false,
-    keywords: ['gnocchi', 'gnocchis'],
-  },
-  {
-    name: 'Lentilles',
-    color: '#DC2626',
-    is_default: false,
-    keywords: ['lentille', 'lentil', 'legume'],
-  },
-  {
-    name: 'Légumes',
-    color: '#22C55E',
-    is_default: false,
-    keywords: ['légume', 'legume', 'vegetable', 'veggie'],
-  },
-  {
-    name: 'Oeufs',
-    color: '#FCD34D',
-    is_default: false,
-    keywords: ['oeuf', 'œuf', 'egg', 'eggs'],
-  },
-  {
-    name: 'Omelettes',
-    color: '#FCD34D',
-    is_default: false,
-    keywords: ['omelette', 'scrambled'],
-  },
-  {
-    name: 'Poissons',
-    color: '#06B6D4',
-    is_default: false,
-    keywords: ['poisson', 'fish', 'saumon', 'trout', 'tuna'],
-  },
-  {
-    name: 'Poulet',
-    color: '#F59E0B',
-    is_default: false,
-    keywords: ['poulet', 'chicken', 'poultry'],
-  },
-  {
-    name: 'Pâtes',
-    color: '#D4A574',
-    is_default: false,
-    keywords: ['pâtes', 'pasta', 'spaghetti', 'tagliatelle', 'fusilli'],
-  },
-  {
-    name: 'Quiches et tartes',
-    color: '#D4A574',
-    is_default: false,
-    keywords: ['quiche', 'tarte', 'tartelette', 'pie'],
-  },
-  {
-    name: 'Quinoa',
-    color: '#10B981',
-    is_default: false,
-    keywords: ['quinoa', 'quinotto'],
-  },
-  {
-    name: 'Riz',
-    color: '#D4A574',
-    is_default: false,
-    keywords: ['riz', 'rice', 'risotto'],
-  },
-  {
-    name: 'Salades',
-    color: '#22C55E',
-    is_default: false,
-    keywords: ['salade', 'salad', 'crudités'],
-  },
-  {
-    name: 'Sarrasin',
-    color: '#D4A574',
-    is_default: false,
-    keywords: ['sarrasin', 'buckwheat'],
-  },
-  {
-    name: 'Semoule',
-    color: '#D4A574',
-    is_default: false,
-    keywords: ['semoule', 'couscous', 'semolina'],
-  },
-  {
-    name: 'Soupes',
-    color: '#06B6D4',
-    is_default: false,
-    keywords: ['soupe', 'soup', 'velouté', 'potage'],
-  },
-  {
-    name: 'Veau',
-    color: '#DC2626',
-    is_default: false,
-    keywords: ['veau', 'veal'],
-  },
-];
+const nameKey = (name) => normalizeForMatching(name);
+const DEFAULT_NAME = SEED_CATEGORIES.find((category) => category.is_default).name;
 
 async function seed() {
   const { data: existing, error: existingError } = await supabase
@@ -193,8 +20,10 @@ async function seed() {
     throw existingError;
   }
 
-  const existingNames = new Set((existing || []).map((row) => String(row.name || '').toLowerCase()));
-  const toInsert = SEED_CATEGORIES.filter((category) => !existingNames.has(category.name.toLowerCase()));
+  const existingNames = new Set((existing || []).map((row) => nameKey(row.name)));
+  const toInsert = SEED_CATEGORIES
+    .filter((category) => !existingNames.has(nameKey(category.name)))
+    .map(({ name, color, keywords, is_default: isDefault }) => ({ name, color, keywords, is_default: isDefault }));
 
   if (toInsert.length) {
     const { error: insertError } = await supabase
@@ -205,7 +34,7 @@ async function seed() {
       throw insertError;
     }
 
-    console.log(`${toInsert.length} categories inserees.`);
+    console.log(`${toInsert.length} categories inserees : ${toInsert.map((category) => category.name).join(', ')}.`);
   } else {
     console.log('Aucune nouvelle categorie a inserer.');
   }
@@ -218,12 +47,10 @@ async function seed() {
     throw refreshedError;
   }
 
-  const defaultCategory = (refreshed || []).find(
-    (category) => String(category.name || '').toLowerCase() === 'sans catégorie',
-  );
+  const defaultCategory = (refreshed || []).find((category) => nameKey(category.name) === nameKey(DEFAULT_NAME));
 
   if (!defaultCategory) {
-    throw new Error('La categorie par defaut "Sans catégorie" est introuvable apres le seed.');
+    throw new Error(`La categorie par defaut "${DEFAULT_NAME}" est introuvable apres le seed.`);
   }
 
   const { error: unsetDefaultError } = await supabase
@@ -247,7 +74,7 @@ async function seed() {
     }
   }
 
-  console.log('Categorie par defaut definie: Sans catégorie.');
+  console.log(`Categorie par defaut definie : ${defaultCategory.name}.`);
 }
 
 seed()
