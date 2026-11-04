@@ -102,6 +102,10 @@ create table if not exists public.recipe_ingredients (
   unit text,
   name text,                            -- normalisé
   food_id uuid references public.foods (id) on delete set null,  -- null = non reconnu
+  -- Comment la ligne a été reconnue. Seuls 'alias' (alias exact) et 'manual'
+  -- (ligne corrigée à la main) sont sûrs pour vegetarien, vegan, sans-gluten
+  -- et sans-lactose ; 'similarity' sert au calcul nutritionnel seulement.
+  match_method text check (match_method in ('alias', 'similarity', 'manual')),
   match_score numeric,
   grams numeric,
   status text not null default 'auto' check (status in ('auto', 'checked', 'ignored')),
