@@ -13,6 +13,8 @@ const MATCH_THRESHOLD = 0.45;
 const RAW_PREFERENCE_MARGIN = 0.05;
 const SMALL_SPICE_GRAMS = 5;
 const MIN_PROTEIN_PER_SERVING = 10;
+// En dessous (g pour 100 g), une quantité inconnue ne change pas la protéine principale
+const LOW_PROTEIN_PER_100G = 2;
 
 // ---------- 1. parseIngredientLine ----------
 
@@ -26,16 +28,20 @@ const NUMBER_WORDS = {
   un: 1, une: 1, deux: 2, trois: 3, quatre: 4, cinq: 5, six: 6, sept: 7, huit: 8, neuf: 9,
   dix: 10, douze: 12, quinze: 15, vingt: 20,
 };
+// « 1 dizaine de tomates cerises », « une quinzaine de crevettes »
+const MULTIPLIERS = { dizaine: 10, douzaine: 12, quinzaine: 15, vingtaine: 20, trentaine: 30, cinquantaine: 50, centaine: 100 };
+const MULTIPLIER = new RegExp(`^(${Object.keys(MULTIPLIERS).join('|')})s?\\s+(?:de\\s+|d')?`);
 
 const NUM = String.raw`\d+(?:[.,]\d+)?`;
+const MASS_VOLUME = String.raw`kg|kilos?|mg|grammes?|grs?|g|ml|cl|dl|litres?|l`;
 
 // Unités reconnues juste après la quantité, testées dans l'ordre.
-// Le texte est déjà en minuscules et sans accents.
+// Le texte est déjà en minuscules et sans accents. « cuillère à table » : Québec.
 const UNIT_PATTERNS = [
-  ['cas', /^cuil+(?:eree|ere|er)?s?\.?\s*(?:a\s*)?(?:soupe|s\.?)(?![a-z])/],
-  ['cac', /^cuil+(?:eree|ere|er)?s?\.?\s*(?:a\s*)?(?:cafe|the|c\.?)(?![a-z])/],
-  ['cas', /^c\.?\s*(?:a\s*\.?\s*)?s(?:oupe)?\.?(?![a-z])/],
-  ['cac', /^c\.?\s*(?:a\s*\.?\s*)?(?:c(?:afe)?|the)\.?(?![a-z])/],
+  ['cas', /^cuil+(?:eree|ere|er)?s?\.?\s*(?:a\s*(?:soupe|table|s\.?)|soupe|table)(?![a-z])/],
+  ['cac', /^cuil+(?:eree|ere|er)?s?\.?\s*(?:a\s*(?:cafe|the|c\.?)|cafe|the)(?![a-z])/],
+  ['cas', /^c\.?\s*(?:a\s*\.?\s*|\/\s*)?(?:s(?:oupe)?|table)\.?(?![a-z])/],
+  ['cac', /^c\.?\s*(?:a\s*\.?\s*|\/\s*)?(?:c(?:afe)?|the)\.?(?![a-z])/],
   ['cas', /^(?:tbsp|tablespoons?)(?![a-z])/],
   ['cac', /^(?:tsp|teaspoons?)(?![a-z])/],
   ['kg', /^(?:kg|kilos?|kilogrammes?)(?![a-z'])/],
@@ -58,30 +64,37 @@ const UNIT_PATTERNS = [
   ['poignee', /^poignees?(?![a-z])/],
   ['unite', /^(?:unites?|pieces?)(?![a-z])/],
 ];
-const WEIGHT_IN_PARENTHESES = new RegExp(`(${NUM})\\s*(kg|kilos?|mg|grammes?|grs?|g|ml|cl|dl|litres?|l)\\.?(?![a-z])`);
+const WEIGHT_IN_PARENTHESES = new RegExp(`(${NUM})\\s*(${MASS_VOLUME})\\.?(?![a-z])`);
+const MASS_VOLUME_CODES = new Set(['g', 'kg', 'mg', 'ml', 'cl', 'dl', 'l']);
+// Quantité sans valeur utilisable : « quelques noix », « un peu de beurre »
+const VAGUE = /^(?:quelques gouttes d(?:e |')|quelques|un (?:petit )?peu d(?:e |')|peu d(?:e |')|un trait d(?:e |')|trait d(?:e |')|une goutte d(?:e |')|gouttes? d(?:e |')|un soupcon d(?:e |'))\s*/;
+// « le jus d'un citron », « jus de 2 citrons verts »
+const JUICE = /^(?:le\s+)?jus\s+d(?:e\s+|'\s*|\s+)?(?:(\d+(?:[.,]\d+)?)|(un|une|deux|trois|quatre))\s+(citrons?(?: verts?| jaunes?)?|limes?|oranges?|pamplemousses?)\b/;
 
 // Adjectifs de taille avant l'unité ou le nom : « 2 grosses cuillères », « 1 petit oignon »
 const SIZE_WORDS = /^(?:(?:petite?s?|grosse?s?|gros|grande?s?|bonne?s?|belle?s?|beaux?|bel|moyenne?s?|bien)\s+(?!(?:pois|suisses?|epeautre)\b))+/;
-// Après une cuillère : « rase », « bombée »...
-const SPOON_WORDS = /^(?:(?:rases?|bombees?|pleines?|bien|genereuses?|bonnes?)\s+)+/;
+// Après l'unité : « cuillère rase », « tranches épaisses »...
+const SPOON_WORDS = /^(?:(?:rases?|bombees?|pleines?|bien|genereuses?|bonnes?|epaisses?|fines?)\s+)+/;
 // Contenants sans poids connu : la quantité reste un nombre d'unités
-const CONTAINERS = /^(?:morceaux?|cubes?|carres?|pots?|briques?|barquettes?|paquets?|bocal|bocaux)\s+(?:de\s+|d'|du\s+|des\s+)?/;
+const CONTAINERS = /^(?:morceaux?|cubes?|carres?|pots?|briques?|barquettes?|paquets?|bocal|bocaux|capsules?|dosettes?|blocs?)\s+(?:de\s+|d'|du\s+|des\s+)?/;
 // « un filet d'huile » : pas de quantité utilisable
 const DRIZZLE = /^filets?\s+(?:de\s+|d')?(?=(?:huile|vinaigre|citron|jus|creme|lait|miel|sauce|sirop))/;
 const LEADING_DE = /^(?:de la |de l'|d'|de |du |des )/;
 const LEADING_ARTICLE = /^(?:le |la |les |l')/;
 
 // Fin de nom à couper : « huile pour la cuisson », « roquefort selon goût »...
-const TAIL = /\b(?:pour|selon|suivant|au choix|a votre convenance|a convenance|facultatif|facultative|optionnel|optionnelle|si possible|si besoin|de preference|environ|quantite|type|facon|a temperature ambiante|a defaut)\b.*$/;
+const TAIL = /\b(?:pour|selon|suivant|au choix|a votre convenance|a convenance|facultatif|facultative|optionnel|optionnelle|si possible|si besoin|si vous aimez|si vous voulez|de preference|dans l ideal|environ|quantite|type|facon|a temperature ambiante|a defaut|de cuisson|a volonte|au gout|a votre gout)\b.*$/;
 // Expressions à garder entières même si elles contiennent un qualificatif
 const PROTECTED = [
   'petits? pois', 'petits? suisses?', 'petit epeautre', 'cremes? fraiches?', 'fromages? frais',
   'levures? fraiches?', 'chevres? frais', 'pates fraiches', 'fromages? rapes?', 'emmental rape',
   'gruyere rape', 'lait entier', 'cremes? entieres?', 'jambons? crus?', 'patates? douces?',
   'tomates? concassees?', 'tomates? pelees?', 'boeuf hache', 'viande hachee', 'steaks? haches?',
-  'fines herbes', 'piment doux', 'gros sel',
+  'fines herbes', 'piment doux', 'gros sel', 'cremes? fluides?', 'bouquet garni',
 ].map((pattern) => new RegExp(`\\b${pattern}\\b`, 'g'));
-const QUALIFIER_PHRASES = /\b(?:en (?:petits |gros |fines |fins )?(?:des|cubes|morceaux|rondelles|lamelles|tranches|julienne|quartiers|batonnets|copeaux|petits morceaux|deux|2|quatre|4|huit|8)|au naturel|de taille moyenne|de bonne qualite|bien mures?|a temperature ambiante)\b/g;
+const QUALIFIER_PHRASES = /\b(?:en (?:petits |gros |fines |fins )?(?:des|cubes|morceaux|rondelles|lamelles|tranches|julienne|quartiers|batonnets|copeaux|petits morceaux|deux|2|quatre|4|huit|8|conserves?|boites?|bocal|branches?)|au naturel|de taille moyenne|de bonne qualite|bien mures?|a temperature ambiante|non traitee?s?|non salee?s?|de saison|a point|a chair ferme|du commerce|du potager|sans croute|sans pre ?cuisson)\b/g;
+// Morceau ou portion en tête de nom : « rondelles de chorizo », « blancs de poireaux »
+const PIECE = /^(?:gousses?|rondelles?|lamelles?|copeaux|des|cubes?|morceaux?|boules?|billes?|cerneaux|tiges?|fleurons?|bulbes?|quartiers?|petales|allumettes|batonnets|blancs?|dos|paves?|filets?|feuilles?|brins?|branches?|bouquets?|poignees?|bols?|portions?|doses?|traits?|gouttes?|tranches?|sections?|troncons?|plaques?)\s+(?:de|d)\s+/;
 const QUALIFIER_WORDS = new Set(`
   frais fraiche fraiches hache hachee haches hachees emince emincee eminces emincees
   cisele ciselee ciseles ciselees concasse concassee concasses concassees rape rapee rapes rapees
@@ -95,6 +108,15 @@ const QUALIFIER_WORDS = new Set(`
   mixe mixee mixes mixees cru crue crus crues doux douce douces maison nature naturel
   rond ronde ronds rondes rectangulaire rectangulaires mur mure murs mures bien tres
   denoyaute denoyautee denoyautes denoyautees tranche tranchee tranches tranchees
+  fraichement moulu moulue moulus moulues degerme degermee degermes degermees
+  ecrase ecrasee ecrases ecrasees presse pressee presses pressees battu battue battus battues
+  rince rincee rinces rincees nettoye nettoyee nettoyes nettoyees equeute equeutee equeutes equeutees
+  ecosse ecossee ecosses ecossees torrefie torrefiee torrefies torrefiees toaste toastee toastes toastees
+  effile effilee effiles effilees monde mondee mondes mondees revenu revenue revenus revenues
+  dilue diluee dilues diluees ferme fermes joli jolie jolis jolies multicolore multicolores
+  melange melangee melanges melangees varie variee varies variees legerement dore doree dores dorees
+  desosse desossee desosses desossees tamise tamisee tamises tamisees fluide fluides
+  surgele surgelee surgeles surgelees quelques allumette allumettes
 `.trim().split(/\s+/));
 
 function formatNumber(value) {
@@ -109,6 +131,10 @@ function parseNumber(text) {
 // Texte de travail : minuscules, sans accents, apostrophes droites, fractions en décimales
 function prepare(raw) {
   return String(raw ?? '')
+    .replace(/[​-‍⁠﻿]/g, '') // caractères invisibles laissés par certains sites
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
     .replace(/[’‘`´ʼ]/g, "'")
     .replace(/œ/g, 'oe').replace(/Œ/g, 'Oe').replace(/æ/g, 'ae').replace(/Æ/g, 'Ae')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -118,8 +144,15 @@ function prepare(raw) {
     .replace(/(\d+)\s+(\d+)\s*\/\s*(\d+)/g,
       (match, whole, num, den) => (Number(den) ? ` ${formatNumber(Number(whole) + Number(num) / Number(den))} ` : match))
     .replace(/(\d+)\s*\/\s*(\d+)/g, (match, num, den) => (Number(den) ? ` ${formatNumber(Number(num) / Number(den))} ` : match))
+    // Pourcentages (« crème à 4 % », « 30% MG ») : jamais une quantité
+    .replace(new RegExp(`(?:\\ba\\s+)?${NUM}\\s*%(?:\\s*(?:de\\s+)?mg\\b)?`, 'g'), ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function readMassOrVolume(text) {
+  const match = text.match(new RegExp(`^(${NUM})\\s*(${MASS_VOLUME})\\.?(?![a-z'])\\s*`));
+  return match ? { quantity: parseNumber(match[1]), unit: unitCode(match[2]), length: match[0].length } : null;
 }
 
 // Retire toutes les parenthèses (même imbriquées) ; garde le premier poids ou volume trouvé
@@ -152,7 +185,7 @@ function readUnit(text) {
 }
 
 function removeQualifiers(name) {
-  let text = name.replace(QUALIFIER_PHRASES, ' ');
+  let text = name.replace(PIECE, '').replace(QUALIFIER_PHRASES, ' ');
   PROTECTED.forEach((pattern) => { text = text.replace(pattern, (match) => match.replace(/ /g, '_')); });
   const kept = text.split(/\s+/).filter((word) => word && !QUALIFIER_WORDS.has(word));
   return kept.join(' ').replace(/_/g, ' ')
@@ -178,6 +211,8 @@ function isAlwaysIgnoredName(name, wholeText) {
   if (/^(?:glacons?|glace pilee|glace)$/.test(name)) return true;
   if (/\b(?:arome|aromes|extrait|extraits|essence|colorant|colorants)\b/.test(name)) return true;
   if (/\b(?:fleur d oranger|eau de rose)\b/.test(name)) return true;
+  // Pas un aliment : « papier aluminium », « cure-dents »
+  if (/^(?:papier |feuille d )?(?:aluminium|papier sulfurise|film alimentaire|cure dents?|pique brochettes?|ficelle)$/.test(name)) return true;
   return false;
 }
 
@@ -185,13 +220,30 @@ function isAlwaysIgnoredName(name, wholeText) {
 //   name : nom normalisé, sans qualificatifs ; fullName : avant retrait des qualificatifs
 //   ignored : sel, poivre, eau, glaçons, arômes et extraits, ou ligne sans nom
 function parseIngredientLine(text) {
-  const { text: prepared, weight } = extractParentheses(prepare(text));
+  const { text: prepared, weight: parenthesesWeight } = extractParentheses(prepare(text));
+  let weight = parenthesesWeight;
   let rest = prepared;
   let quantity = null;
   let unit = null;
 
+  // « 200 g de pois chiches, soit 1 boîte » / « pois chiches soit 200 gr » : le poids l'emporte
+  const soit = rest.match(new RegExp(`\\bsoit\\s+(${NUM})\\s*(${MASS_VOLUME})\\.?(?![a-z'])`));
+  if (soit) {
+    if (!weight) weight = { quantity: parseNumber(soit[1]), unit: unitCode(soit[2]) };
+    rest = `${rest.slice(0, soit.index)} ${rest.slice(soit.index + soit[0].length)}`.replace(/\s+/g, ' ').trim();
+  }
+
+  const vague = rest.match(VAGUE);
+  if (vague) rest = rest.slice(vague[0].length);
+
+  const half = rest.match(/^(?:la\s+)?moitie\s+d(?:'|\s)\s*(?:un|une)\s+/);
   const leading = rest.match(new RegExp(`^(${NUM})(?:\\s*(?:-|–|a|ou)\\s*(${NUM}))?(?![\\d.,])\\s*`));
-  if (leading) {
+  if (vague) {
+    // pas de quantité utilisable
+  } else if (half) {
+    quantity = 0.5;
+    rest = rest.slice(half[0].length);
+  } else if (leading) {
     const low = parseNumber(leading[1]);
     const high = leading[2] ? parseNumber(leading[2]) : null;
     quantity = high !== null ? (low + high) / 2 : low;
@@ -203,30 +255,51 @@ function parseIngredientLine(text) {
       rest = rest.slice(word[0].length);
     }
   }
+  // « 30 + 20 g de parmesan »
+  for (let plus = rest.match(new RegExp(`^\\+\\s*(${NUM})\\s*`)); quantity !== null && plus; plus = rest.match(new RegExp(`^\\+\\s*(${NUM})\\s*`))) {
+    quantity += parseNumber(plus[1]);
+    rest = rest.slice(plus[0].length);
+  }
   if (quantity !== null) {
-    const half = rest.match(/^demie?\s*-?\s*/);
-    if (half) {
+    const halfWord = rest.match(/^demie?\s*-?\s*/);
+    if (halfWord) {
       quantity *= 0.5;
-      rest = rest.slice(half[0].length);
-    }
-    const dozen = rest.match(/^(dizaines?|douzaines?)\s+(?:de\s+|d')?/);
-    if (dozen) {
-      quantity *= dozen[1].startsWith('diz') ? 10 : 12;
-      rest = rest.slice(dozen[0].length);
+      rest = rest.slice(halfWord[0].length);
     }
     rest = rest.replace(SIZE_WORDS, '');
   }
+  const multiplier = rest.match(MULTIPLIER);
+  if (multiplier && !vague) {
+    quantity = (quantity ?? 1) * MULTIPLIERS[multiplier[1]];
+    rest = rest.slice(multiplier[0].length);
+  }
 
+  const juice = !vague && rest.match(JUICE);
+  if (juice) {
+    // « le jus d'un citron » → 1 unité de « jus de citron »
+    quantity = (quantity ?? 1) * (juice[1] ? parseNumber(juice[1]) : NUMBER_WORDS[juice[2]]);
+    unit = 'unite';
+    rest = `jus de ${singularize(juice[3])}${rest.slice(juice[0].length)}`;
+  }
+
+  // « 1 noix de beurre » ≈ 10 g
+  const knob = !juice && rest.match(/^noix\s+de\s+(?=beurre\b)/);
   // Unités anglo-saxonnes, converties en grammes
-  const imperial = quantity !== null && rest.match(/^(lbs?|livres?|pounds?|oz|onces?|ounces?)\.?\s+(?:de\s+|d'|of\s+)?/);
-  const readU = imperial ? null : readUnit(rest);
-  if (imperial) {
+  const imperial = !juice && !knob && quantity !== null && rest.match(/^(lbs?|livres?|pounds?|oz|onces?|ounces?)\.?\s+(?:de\s+|d'|of\s+)?/);
+  const readU = juice || knob || imperial ? null : readUnit(rest);
+  if (juice) {
+    // déjà traité
+  } else if (knob) {
+    quantity = (quantity ?? 1) * 10;
+    unit = 'g';
+    rest = rest.slice(knob[0].length);
+  } else if (imperial) {
     quantity *= /^(?:lb|livre|pound)/.test(imperial[1]) ? 453.6 : 28.35;
     unit = 'g';
     rest = rest.slice(imperial[0].length);
-  } else if (readU && (quantity !== null || readU.code !== 'unite')) {
+  } else if (readU && (quantity !== null || readU.code !== 'unite') && !vague) {
     unit = readU.code;
-    rest = readU.rest.replace(SPOON_WORDS, '');
+    rest = readU.rest.replace(/^\.\s*/, '').replace(SPOON_WORDS, '');
     if (quantity === null) quantity = 1; // « cuillère à soupe de sucre »
   } else if (quantity !== null && CONTAINERS.test(rest)) {
     unit = 'unite';
@@ -238,14 +311,54 @@ function parseIngredientLine(text) {
     unit = 'unite';
   }
 
-  // Quantité en fin de ligne : « Farine : 200 g », « beurre 50g »
-  if (quantity === null) {
-    const trailing = rest.match(new RegExp(`[\\s:]+(${NUM})\\s*(kg|g|grs?|grammes?|mg|ml|cl|dl|l|litres?)\\.?\\s*$`));
-    if (trailing) {
-      quantity = parseNumber(trailing[1]);
-      unit = unitCode(trailing[2]);
-      rest = rest.slice(0, trailing.index);
+  if (quantity !== null) {
+    // « 1 cuillère à thé et demie de paprika »
+    const andHalf = rest.match(/^et\s+demie?\s+/);
+    if (andHalf) {
+      quantity += 0.5;
+      rest = rest.slice(andHalf[0].length);
     }
+    // « 15 g + 20 g de beurre »
+    for (let plus = rest.match(new RegExp(`^\\+\\s*(${NUM})\\s*`)); plus; plus = rest.match(new RegExp(`^\\+\\s*(${NUM})\\s*`))) {
+      const after = rest.slice(plus[0].length);
+      const extraUnit = readUnit(after);
+      if (extraUnit && extraUnit.code !== unit) break;
+      quantity += parseNumber(plus[1]);
+      rest = extraUnit ? extraUnit.rest : after;
+    }
+    // Taille du contenant : « 1 boîte de 400 g de tomates », « 1 sachet de 25 g de levure »
+    if (!MASS_VOLUME_CODES.has(unit)) {
+      const size = readMassOrVolume(rest.replace(/^(?:de\s+|d')/, ''));
+      if (size && /^(?:de\s+|d')?\S/.test(rest)) {
+        const afterSize = rest.replace(/^(?:de\s+|d')/, '').slice(size.length);
+        if (/^(?:de\s+|d')/.test(afterSize)) {
+          quantity *= size.quantity;
+          unit = size.unit;
+          rest = afterSize;
+        }
+      }
+    }
+  }
+
+  // Quantité en fin de ligne : « Farine : 200 g », « beurre 50g », « 2 tranches d'agneau 200 g »
+  const trailing = rest.match(new RegExp(`[\\s:]+(${NUM})\\s*(${MASS_VOLUME})\\.?\\s*$`));
+  if (trailing && (quantity === null || !MASS_VOLUME_CODES.has(unit))) {
+    quantity = parseNumber(trailing[1]);
+    unit = unitCode(trailing[2]);
+    rest = rest.slice(0, trailing.index);
+  }
+
+  // « 2 gousses d'ail + 1 gousse » : la suite après « + » s'ajoute si l'unité est la même
+  // (seulement avant une alternative « ou ... » ou une virgule)
+  const cut = rest.search(/[,;:]| ou | \/ /);
+  const head = cut >= 0 ? rest.slice(0, cut) : rest;
+  const [main, ...extras] = head.split(/\s+\+\s+/);
+  rest = main + (cut >= 0 ? rest.slice(cut) : '');
+  for (const extra of extras) {
+    const extraQty = extra.match(new RegExp(`^(${NUM})\\s*`));
+    if (!extraQty || quantity === null) continue;
+    const extraUnit = readUnit(extra.slice(extraQty[0].length));
+    if (!extraUnit || extraUnit.code === unit) quantity += parseNumber(extraQty[1]);
   }
 
   rest = rest.replace(LEADING_DE, '');
@@ -292,6 +405,17 @@ function singularize(name) {
 
 // « Cru » au sens large : pour les herbes, l'état brut est « frais »
 const RAW_WORD = /\b(?:cru|crue|crus|crues|frais|fraiche|fraiches)\b/;
+// Ingrédient déjà cuit : « quinoa cuit », « lentilles cuites »
+const COOKED_WORD = /\b(?:cuit|cuite|cuits|cuites|bouilli|bouillie|bouillis|bouillies)\b/;
+// Variante d'un alias : « cumin en poudre » → « cumin »
+const ALIAS_SUFFIX = /\s+(?:en poudre|moulue?s?)$/;
+
+// Noms sans équivalent Ciqual fiable : alias à ciqual_code null dans
+// food-aliases.json. Ils restent « non reconnus » (pas de rapprochement par
+// similarité), pour ne pas poser une étiquette sur une supposition.
+const NO_GUESS = new Set(Object.entries(require('../scripts/data/food-aliases.json'))
+  .filter(([, value]) => value.ciqual_code === null)
+  .map(([alias]) => alias));
 
 let defaultMatcher = null;
 function getDefaultMatcher() {
@@ -299,37 +423,46 @@ function getDefaultMatcher() {
   return defaultMatcher;
 }
 
+function sortCandidates(list) {
+  return [...list].sort((a, b) => b.score - a.score || a.name.length - b.name.length);
+}
+
 // → { foodId, foodName, score, method: 'alias' | 'similarity' | null, best }
 //   best : meilleur candidat, même sous le seuil (pour les rapports)
 async function matchFood(name, { matcher = getDefaultMatcher(), fullName = null } = {}) {
   const normalized = normalizeFoodName(name);
-  if (!normalized) return { foodId: null, foodName: null, score: null, method: null, best: null };
+  const none = { foodId: null, foodName: null, score: null, method: null, best: null };
+  if (!normalized) return none;
 
   // Alias exact : le nom complet d'abord (« levure fraiche »), puis sans qualificatifs
-  const forms = [...new Set([fullName, fullName && singularize(fullName), normalized, singularize(normalized)]
-    .filter(Boolean))];
+  const bases = [fullName, normalized].filter(Boolean);
+  const forms = [...new Set(bases.flatMap((base) => {
+    const stripped = base.replace(ALIAS_SUFFIX, '');
+    return [base, singularize(base), stripped, singularize(stripped)];
+  }))];
   for (const form of forms) {
+    if (NO_GUESS.has(form)) return none;
     const foodId = await matcher.findAlias(form);
     if (foodId) return { foodId, foodName: null, score: 1, method: 'alias', best: null };
   }
 
-  const searches = [...new Set([normalized, singularize(normalized)])];
-  const merged = new Map();
-  for (const form of searches) {
-    for (const candidate of await matcher.searchCandidates(form)) {
-      const previous = merged.get(candidate.food_id);
-      if (!previous || candidate.score > previous.score) merged.set(candidate.food_id, candidate);
-    }
+  // Similarité : au singulier d'abord (les aliments bruts sont au singulier dans
+  // Ciqual, les plats au pluriel : « abricots » ne doit pas donner « Tarte aux abricots »)
+  const singular = singularize(normalized);
+  let candidates = sortCandidates(await matcher.searchCandidates(singular));
+  if ((!candidates[0] || candidates[0].score < MATCH_THRESHOLD) && singular !== normalized) {
+    candidates = sortCandidates(await matcher.searchCandidates(normalized));
   }
-  const candidates = [...merged.values()].sort((a, b) => b.score - a.score || a.name.length - b.name.length);
   const best = candidates[0] || null;
   if (!best || best.score < MATCH_THRESHOLD) {
-    return { foodId: null, foodName: null, score: best ? best.score : null, method: null, best };
+    return { ...none, score: best ? best.score : null, best };
   }
 
-  const raw = candidates.find((candidate) => candidate.score >= best.score - RAW_PREFERENCE_MARGIN
-    && RAW_WORD.test(normalizeFoodName(candidate.name)));
-  const chosen = raw || best;
+  // Entre candidats proches, l'aliment cru (ou cuit si le nom le précise)
+  const preferred = COOKED_WORD.test(normalized) ? COOKED_WORD : RAW_WORD;
+  const state = candidates.find((candidate) => candidate.score >= best.score - RAW_PREFERENCE_MARGIN
+    && preferred.test(normalizeFoodName(candidate.name)));
+  const chosen = state || best;
   return { foodId: chosen.food_id, foodName: chosen.name, score: chosen.score, method: 'similarity', best };
 }
 
@@ -360,7 +493,7 @@ const HERB_SPICE = new RegExp(`\\b(?:${[
   'basilic', 'coriandre', 'menthe', 'aneth', 'estragon', 'sauge', 'origan', 'marjolaine', 'sarriette',
   'cerfeuil', 'carvi', 'fenugrec', 'sumac', 'zaatar', 'gingembre', 'epices?', 'nigelle', 'genievre',
   'cayenne', 'espelette', 'tandoori', 'colombo', 'graines? de (?:fenouil|cumin|coriandre|moutarde|pavot)',
-  'baies? roses?',
+  'baies? roses?', 'garni', 'cajun', 'tabasco', 'sriracha', 'worcestershire', 'wasabi',
 ].join('|')})\\b`);
 const HERB_SPICE_SUBGROUPS = new Set(['épices', 'herbes']);
 
@@ -445,12 +578,20 @@ function summarize(rows, foods, servings) {
     if (!has('is_dairy')) dietTags.push('sans-lactose');
   }
 
-  // Protéine principale : il faut l'aliment et les grammes de chaque ligne
+  // Protéine principale : il faut l'aliment de chaque ligne, et ses grammes sauf
+  // s'il n'apporte presque pas de protéines (« huile d'olive » sans quantité)
+  const proteinUnknown = (row) => {
+    const food = foodOf(row);
+    if (!food) return true;
+    if (row.grams !== null) return false;
+    const per100 = Number(food.proteins_g);
+    return !(food.proteins_g !== null && Number.isFinite(per100) && per100 < LOW_PROTEIN_PER_100G);
+  };
   let mainProtein = null;
-  if (servingsCount && active.every((row) => foodOf(row) && row.grams !== null)) {
+  if (servingsCount && !active.some(proteinUnknown)) {
     const bySource = { animale: 0, 'oeufs-laitiers': 0, vegetale: 0 };
     let protein = 0;
-    for (const row of active) {
+    for (const row of active.filter((line) => line.grams !== null)) {
       const food = foodOf(row);
       const grams = (row.grams * (Number(food.proteins_g) || 0)) / 100;
       protein += grams;

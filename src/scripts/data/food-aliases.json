@@ -1,0 +1,1047 @@
+{
+  "farine": {
+    "ciqual_code": "9436",
+    "food": "Farine de blé tendre ou froment T55 (pour pains)"
+  },
+  "farine de ble": {
+    "ciqual_code": "9436",
+    "food": "Farine de blé tendre ou froment T55 (pour pains)"
+  },
+  "farine t55": {
+    "ciqual_code": "9436",
+    "food": "Farine de blé tendre ou froment T55 (pour pains)"
+  },
+  "farine de ble t55": {
+    "ciqual_code": "9436",
+    "food": "Farine de blé tendre ou froment T55 (pour pains)"
+  },
+  "farine t45": {
+    "ciqual_code": "9440",
+    "food": "Farine de blé tendre ou froment T45 (pour pâtisserie)"
+  },
+  "farine t65": {
+    "ciqual_code": "9435",
+    "food": "Farine de blé tendre ou froment T65"
+  },
+  "farine complete": {
+    "ciqual_code": "9415",
+    "food": "Farine de blé tendre ou froment T150"
+  },
+  "sucre": {
+    "ciqual_code": "31016",
+    "food": "Sucre blanc"
+  },
+  "sucre en poudre": {
+    "ciqual_code": "31016",
+    "food": "Sucre blanc"
+  },
+  "sucre semoule": {
+    "ciqual_code": "31016",
+    "food": "Sucre blanc"
+  },
+  "sucre blanc": {
+    "ciqual_code": "31016",
+    "food": "Sucre blanc"
+  },
+  "sucre glace": {
+    "ciqual_code": "31016",
+    "food": "Sucre blanc"
+  },
+  "sucre roux": {
+    "ciqual_code": "31017",
+    "food": "Sucre roux"
+  },
+  "cassonade": {
+    "ciqual_code": "31017",
+    "food": "Sucre roux"
+  },
+  "vergeoise": {
+    "ciqual_code": "31017",
+    "food": "Sucre roux"
+  },
+  "sucre vanille": {
+    "ciqual_code": "31044",
+    "food": "Sucre vanillé"
+  },
+  "miel": {
+    "ciqual_code": "31008",
+    "food": "Miel"
+  },
+  "lait": {
+    "ciqual_code": "19033",
+    "food": "Lait demi-écrémé (aliment moyen)"
+  },
+  "lait demi ecreme": {
+    "ciqual_code": "19033",
+    "food": "Lait demi-écrémé (aliment moyen)"
+  },
+  "lait entier": {
+    "ciqual_code": "19016",
+    "food": "Lait entier (aliment moyen)"
+  },
+  "lait ecreme": {
+    "ciqual_code": "19050",
+    "food": "Lait écrémé, UHT"
+  },
+  "beurre": {
+    "ciqual_code": "16400",
+    "food": "Beurre à 80% MG minimum, doux"
+  },
+  "beurre doux": {
+    "ciqual_code": "16400",
+    "food": "Beurre à 80% MG minimum, doux"
+  },
+  "beurre mou": {
+    "ciqual_code": "16400",
+    "food": "Beurre à 80% MG minimum, doux"
+  },
+  "beurre fondu": {
+    "ciqual_code": "16400",
+    "food": "Beurre à 80% MG minimum, doux"
+  },
+  "beurre demi sel": {
+    "ciqual_code": "16402",
+    "food": "Beurre à 80% MG, demi-sel"
+  },
+  "beurre sale": {
+    "ciqual_code": "16403",
+    "food": "Beurre à 80% MG, salé"
+  },
+  "huile": {
+    "ciqual_code": "17270",
+    "food": "Huile d'olive vierge extra"
+  },
+  "huile d olive": {
+    "ciqual_code": "17270",
+    "food": "Huile d'olive vierge extra"
+  },
+  "huile de tournesol": {
+    "ciqual_code": "17440",
+    "food": "Huile de tournesol"
+  },
+  "huile de colza": {
+    "ciqual_code": "17130",
+    "food": "Huile de colza"
+  },
+  "huile neutre": {
+    "ciqual_code": "17001",
+    "food": "Huile végétale (aliment moyen)"
+  },
+  "huile vegetale": {
+    "ciqual_code": "17001",
+    "food": "Huile végétale (aliment moyen)"
+  },
+  "pates": {
+    "ciqual_code": "9810",
+    "food": "Pâtes sèches, standard, crues"
+  },
+  "spaghetti": {
+    "ciqual_code": "9810",
+    "food": "Pâtes sèches, standard, crues"
+  },
+  "penne": {
+    "ciqual_code": "9810",
+    "food": "Pâtes sèches, standard, crues"
+  },
+  "coquillette": {
+    "ciqual_code": "9810",
+    "food": "Pâtes sèches, standard, crues"
+  },
+  "macaroni": {
+    "ciqual_code": "9810",
+    "food": "Pâtes sèches, standard, crues"
+  },
+  "fusilli": {
+    "ciqual_code": "9810",
+    "food": "Pâtes sèches, standard, crues"
+  },
+  "tagliatelle": {
+    "ciqual_code": "9821",
+    "food": "Pâtes sèches, aux oeufs, crues"
+  },
+  "lasagne": {
+    "ciqual_code": "9821",
+    "food": "Pâtes sèches, aux oeufs, crues"
+  },
+  "nouilles chinoises": {
+    "ciqual_code": "9863",
+    "food": "Pâtes ou nouilles asiatiques sèches, au blé et aux oeufs, nature, crues"
+  },
+  "riz": {
+    "ciqual_code": "9100",
+    "food": "Riz blanc, cru"
+  },
+  "riz blanc": {
+    "ciqual_code": "9100",
+    "food": "Riz blanc, cru"
+  },
+  "riz rond": {
+    "ciqual_code": "9100",
+    "food": "Riz blanc, cru"
+  },
+  "riz arborio": {
+    "ciqual_code": "9100",
+    "food": "Riz blanc, cru"
+  },
+  "riz a risotto": {
+    "ciqual_code": "9100",
+    "food": "Riz blanc, cru"
+  },
+  "riz basmati": {
+    "ciqual_code": "9119",
+    "food": "Riz thaï ou basmati, cru"
+  },
+  "riz thai": {
+    "ciqual_code": "9119",
+    "food": "Riz thaï ou basmati, cru"
+  },
+  "riz complet": {
+    "ciqual_code": "9102",
+    "food": "Riz complet, cru"
+  },
+  "semoule": {
+    "ciqual_code": "9610",
+    "food": "Semoule de blé dur, crue"
+  },
+  "couscous": {
+    "ciqual_code": "9681",
+    "food": "Graine de couscous (semoule de blé dur précuite), à cuire"
+  },
+  "graine de couscous": {
+    "ciqual_code": "9681",
+    "food": "Graine de couscous (semoule de blé dur précuite), à cuire"
+  },
+  "boulgour": {
+    "ciqual_code": "9690",
+    "food": "Boulgour de blé, cru"
+  },
+  "quinoa": {
+    "ciqual_code": "9340",
+    "food": "Quinoa, cru"
+  },
+  "polenta": {
+    "ciqual_code": "9614",
+    "food": "Polenta ou semoule de maïs, précuite, à cuire"
+  },
+  "flocon d avoine": {
+    "ciqual_code": "32140",
+    "food": "Flocons d'avoine"
+  },
+  "levure": {
+    "ciqual_code": "11046",
+    "food": "Levure chimique ou poudre à lever"
+  },
+  "levure chimique": {
+    "ciqual_code": "11046",
+    "food": "Levure chimique ou poudre à lever"
+  },
+  "levure de boulanger": {
+    "ciqual_code": "11045",
+    "food": "Levure de boulanger déshydratée"
+  },
+  "levure de boulanger fraiche": {
+    "ciqual_code": "11010",
+    "food": "Levure de boulanger fraîche"
+  },
+  "levure fraiche": {
+    "ciqual_code": "11010",
+    "food": "Levure de boulanger fraîche"
+  },
+  "maizena": {
+    "ciqual_code": "9510",
+    "food": "Amidon de maïs ou fécule de maïs"
+  },
+  "fecule de mais": {
+    "ciqual_code": "9510",
+    "food": "Amidon de maïs ou fécule de maïs"
+  },
+  "amidon de mais": {
+    "ciqual_code": "9510",
+    "food": "Amidon de maïs ou fécule de maïs"
+  },
+  "fecule de pomme de terre": {
+    "ciqual_code": "4090",
+    "food": "Fécule de pomme de terre"
+  },
+  "chapelure": {
+    "ciqual_code": "7500",
+    "food": "Chapelure"
+  },
+  "cacao": {
+    "ciqual_code": "18100",
+    "food": "Cacao, sans sucres ajoutés, poudre soluble"
+  },
+  "cacao en poudre": {
+    "ciqual_code": "18100",
+    "food": "Cacao, sans sucres ajoutés, poudre soluble"
+  },
+  "chocolat": {
+    "ciqual_code": "31085",
+    "food": "Chocolat noir 40% de cacao et plus, à pâtisser, tablette"
+  },
+  "chocolat noir": {
+    "ciqual_code": "31085",
+    "food": "Chocolat noir 40% de cacao et plus, à pâtisser, tablette"
+  },
+  "chocolat patissier": {
+    "ciqual_code": "31085",
+    "food": "Chocolat noir 40% de cacao et plus, à pâtisser, tablette"
+  },
+  "chocolat noir patissier": {
+    "ciqual_code": "31085",
+    "food": "Chocolat noir 40% de cacao et plus, à pâtisser, tablette"
+  },
+  "chocolat a patisser": {
+    "ciqual_code": "31085",
+    "food": "Chocolat noir 40% de cacao et plus, à pâtisser, tablette"
+  },
+  "chocolat au lait": {
+    "ciqual_code": "31004",
+    "food": "Chocolat au lait, tablette"
+  },
+  "chocolat blanc": {
+    "ciqual_code": "31010",
+    "food": "Chocolat blanc, tablette"
+  },
+  "pain": {
+    "ciqual_code": "7001",
+    "food": "Pain blanc (par ex. : baguette, boule…)"
+  },
+  "baguette": {
+    "ciqual_code": "7001",
+    "food": "Pain blanc (par ex. : baguette, boule…)"
+  },
+  "pain de mie": {
+    "ciqual_code": "7200",
+    "food": "Pain de mie blanc, préemballé"
+  },
+  "pate feuilletee": {
+    "ciqual_code": "23424",
+    "food": "Pâte feuilletée, pur beurre, préemballée, crue"
+  },
+  "pate brisee": {
+    "ciqual_code": "23414",
+    "food": "Pâte brisée, pur beurre, préemballée, crue"
+  },
+  "pate sablee": {
+    "ciqual_code": "23444",
+    "food": "Pâte sablée, pur beurre, préemballée, crue"
+  },
+  "pate a pizza": {
+    "ciqual_code": "37001",
+    "food": "Pâte à pizza, préemballée, crue"
+  },
+  "bouillon de volaille": {
+    "ciqual_code": "25947",
+    "food": "Bouillon de volaille, déshydraté reconstitué"
+  },
+  "bouillon de poulet": {
+    "ciqual_code": "25947",
+    "food": "Bouillon de volaille, déshydraté reconstitué"
+  },
+  "bouillon de legumes": {
+    "ciqual_code": "25948",
+    "food": "Bouillon de légumes, déshydraté reconstitué"
+  },
+  "bouillon de boeuf": {
+    "ciqual_code": "25930",
+    "food": "Bouillon de boeuf, déshydraté reconstitué"
+  },
+  "vinaigre": {
+    "ciqual_code": "11018",
+    "food": "Vinaigre"
+  },
+  "vinaigre balsamique": {
+    "ciqual_code": "11091",
+    "food": "Vinaigre balsamique"
+  },
+  "vinaigre de cidre": {
+    "ciqual_code": "11090",
+    "food": "Vinaigre de cidre"
+  },
+  "vinaigre de vin": {
+    "ciqual_code": "11220",
+    "food": "Vinaigre de vin rouge"
+  },
+  "moutarde": {
+    "ciqual_code": "11013",
+    "food": "Moutarde"
+  },
+  "moutarde a l ancienne": {
+    "ciqual_code": "11021",
+    "food": "Moutarde à l'ancienne"
+  },
+  "concentre de tomate": {
+    "ciqual_code": "20068",
+    "food": "Tomate, concentré, appertisé"
+  },
+  "double concentre de tomate": {
+    "ciqual_code": "20268",
+    "food": "Tomate, double concentré, appertisé"
+  },
+  "coulis de tomate": {
+    "ciqual_code": "20260",
+    "food": "Tomate, coulis, appertisé (purée de tomates mi-réduite à 11%)"
+  },
+  "sauce tomate": {
+    "ciqual_code": "20260",
+    "food": "Tomate, coulis, appertisé (purée de tomates mi-réduite à 11%)"
+  },
+  "tomate pelee": {
+    "ciqual_code": "20137",
+    "food": "Tomate, pelée, appertisée, au jus, non égouttée"
+  },
+  "tomate concassee": {
+    "ciqual_code": "20169",
+    "food": "Tomate, chair, appertisée"
+  },
+  "sauce soja": {
+    "ciqual_code": "11104",
+    "food": "Sauce soja, préemballée"
+  },
+  "lait de coco": {
+    "ciqual_code": "18041",
+    "food": "Lait de coco"
+  },
+  "creme de coco": {
+    "ciqual_code": "18041",
+    "food": "Lait de coco"
+  },
+  "gelatine": {
+    "ciqual_code": "11007",
+    "food": "Gélatine, sèche"
+  },
+  "feuille de gelatine": {
+    "ciqual_code": "11007",
+    "food": "Gélatine, sèche"
+  },
+  "agar agar": {
+    "ciqual_code": "11085",
+    "food": "Agar (algue), séché"
+  },
+  "vin blanc": {
+    "ciqual_code": "5215",
+    "food": "Vin blanc sec"
+  },
+  "vin rouge": {
+    "ciqual_code": "5214",
+    "food": "Vin rouge"
+  },
+  "biere": {
+    "ciqual_code": "5001",
+    "food": "Bière \"coeur de marché\" (4-5° alcool)"
+  },
+  "olive": {
+    "ciqual_code": "13184",
+    "food": "Olive (aliment moyen)"
+  },
+  "olive noire": {
+    "ciqual_code": "13186",
+    "food": "Olive noire (aliment moyen)"
+  },
+  "olive verte": {
+    "ciqual_code": "13033",
+    "food": "Olive verte, en saumure, égouttée"
+  },
+  "capre": {
+    "ciqual_code": "11040",
+    "food": "Câpres, au vinaigre"
+  },
+  "cornichon": {
+    "ciqual_code": "11004",
+    "food": "Cornichon, au vinaigre"
+  },
+  "raisin sec": {
+    "ciqual_code": "13046",
+    "food": "Raisin sec"
+  },
+  "pignon de pin": {
+    "ciqual_code": "15025",
+    "food": "Pignon de pin"
+  },
+  "sesame": {
+    "ciqual_code": "15010",
+    "food": "Sésame, graine"
+  },
+  "graine de sesame": {
+    "ciqual_code": "15010",
+    "food": "Sésame, graine"
+  },
+  "amande": {
+    "ciqual_code": "15000",
+    "food": "Amande, avec peau, sans sel ajouté"
+  },
+  "amande en poudre": {
+    "ciqual_code": "15041",
+    "food": "Amande, émondée, sans sel ajouté"
+  },
+  "poudre d amande": {
+    "ciqual_code": "15041",
+    "food": "Amande, émondée, sans sel ajouté"
+  },
+  "noisette": {
+    "ciqual_code": "15004",
+    "food": "Noisette, sans sel ajouté"
+  },
+  "noix": {
+    "ciqual_code": "15005",
+    "food": "Noix, cerneau, séchée"
+  },
+  "noix de coco rapee": {
+    "ciqual_code": "15007",
+    "food": "Noix de coco, chair, sèche"
+  },
+  "beurre de cacahuete": {
+    "ciqual_code": "15202",
+    "food": "Beurre de cacahuète ou pâte d'arachide"
+  },
+  "creme de marron": {
+    "ciqual_code": "15013",
+    "food": "Crème de marron ou confiture de châtaigne, préemballée"
+  },
+  "oeuf": {
+    "ciqual_code": "22000",
+    "food": "Oeuf cru"
+  },
+  "jaune d oeuf": {
+    "ciqual_code": "22002",
+    "food": "Oeuf, jaune (jaune d'oeuf), cru"
+  },
+  "blanc d oeuf": {
+    "ciqual_code": "22001",
+    "food": "Oeuf, blanc (blanc d'oeuf), cru"
+  },
+  "creme": {
+    "ciqual_code": "19410",
+    "food": "Crème 30% MG, épaisse, rayon frais"
+  },
+  "creme fraiche": {
+    "ciqual_code": "19410",
+    "food": "Crème 30% MG, épaisse, rayon frais"
+  },
+  "creme fraiche epaisse": {
+    "ciqual_code": "19410",
+    "food": "Crème 30% MG, épaisse, rayon frais"
+  },
+  "creme epaisse": {
+    "ciqual_code": "19410",
+    "food": "Crème 30% MG, épaisse, rayon frais"
+  },
+  "creme liquide": {
+    "ciqual_code": "19417",
+    "food": "Crème 30% MG, fluide, UHT"
+  },
+  "creme fraiche liquide": {
+    "ciqual_code": "19417",
+    "food": "Crème 30% MG, fluide, UHT"
+  },
+  "creme entiere": {
+    "ciqual_code": "19417",
+    "food": "Crème 30% MG, fluide, UHT"
+  },
+  "creme semi epaisse": {
+    "ciqual_code": "19415",
+    "food": "Crème 30% MG, semi-épaisse, UHT"
+  },
+  "creme fraiche legere": {
+    "ciqual_code": "19431",
+    "food": "Crème 12 à 25% MG, légère, épaisse, rayon frais"
+  },
+  "creme liquide legere": {
+    "ciqual_code": "19436",
+    "food": "Crème 12 à 20% MG, légère, fluide, rayon frais"
+  },
+  "fromage rape": {
+    "ciqual_code": "12118",
+    "food": "Emmental ou emmenthal, râpé"
+  },
+  "emmental rape": {
+    "ciqual_code": "12118",
+    "food": "Emmental ou emmenthal, râpé"
+  },
+  "emmental": {
+    "ciqual_code": "12115",
+    "food": "Emmental ou emmenthal"
+  },
+  "gruyere": {
+    "ciqual_code": "12114",
+    "food": "Gruyère, sans précision (origine France ou Suisse)"
+  },
+  "gruyere rape": {
+    "ciqual_code": "12114",
+    "food": "Gruyère, sans précision (origine France ou Suisse)"
+  },
+  "comte": {
+    "ciqual_code": "12110",
+    "food": "Comté"
+  },
+  "parmesan": {
+    "ciqual_code": "12120",
+    "food": "Parmesan"
+  },
+  "mozzarella": {
+    "ciqual_code": "19590",
+    "food": "Mozzarella au lait de vache"
+  },
+  "feta": {
+    "ciqual_code": "12066",
+    "food": "Feta, au lait de brebis 70% minimum et lait de chèvre 30% maximum"
+  },
+  "chevre": {
+    "ciqual_code": "12812",
+    "food": "Fromage de chèvre bûche"
+  },
+  "fromage de chevre": {
+    "ciqual_code": "12812",
+    "food": "Fromage de chèvre bûche"
+  },
+  "chevre frais": {
+    "ciqual_code": "12805",
+    "food": "Fromage de chèvre frais, type palet, crottin ou bûchette"
+  },
+  "mascarpone": {
+    "ciqual_code": "19584",
+    "food": "Mascarpone"
+  },
+  "ricotta": {
+    "ciqual_code": "19585",
+    "food": "Ricotta"
+  },
+  "fromage blanc": {
+    "ciqual_code": "19646",
+    "food": "Fromage blanc, nature, 2-3% MG"
+  },
+  "yaourt": {
+    "ciqual_code": "19593",
+    "food": "Yaourt ou lait fermenté, nature"
+  },
+  "yaourt nature": {
+    "ciqual_code": "19593",
+    "food": "Yaourt ou lait fermenté, nature"
+  },
+  "reblochon": {
+    "ciqual_code": "12045",
+    "food": "Reblochon"
+  },
+  "raclette": {
+    "ciqual_code": "12749",
+    "food": "Raclette (fromage)"
+  },
+  "fromage a raclette": {
+    "ciqual_code": "12749",
+    "food": "Raclette (fromage)"
+  },
+  "roquefort": {
+    "ciqual_code": "12500",
+    "food": "Roquefort (fromage de brebis)"
+  },
+  "beaufort": {
+    "ciqual_code": "12105",
+    "food": "Beaufort"
+  },
+  "oignon": {
+    "ciqual_code": "20034",
+    "food": "Oignon, cru"
+  },
+  "oignon jaune": {
+    "ciqual_code": "20239",
+    "food": "Oignon jaune, cru"
+  },
+  "oignon rouge": {
+    "ciqual_code": "20238",
+    "food": "Oignon rouge, cru"
+  },
+  "echalote": {
+    "ciqual_code": "20097",
+    "food": "Échalote, crue"
+  },
+  "ail": {
+    "ciqual_code": "11000",
+    "food": "Ail, cru"
+  },
+  "carotte": {
+    "ciqual_code": "20009",
+    "food": "Carotte, crue"
+  },
+  "pomme de terre": {
+    "ciqual_code": "4008",
+    "food": "Pomme de terre, sans peau, crue"
+  },
+  "patate douce": {
+    "ciqual_code": "4101",
+    "food": "Patate douce, crue"
+  },
+  "tomate": {
+    "ciqual_code": "20385",
+    "food": "Tomate sans précision, crue (aliment moyen)"
+  },
+  "tomate cerise": {
+    "ciqual_code": "20172",
+    "food": "Tomate cerise, crue"
+  },
+  "courgette": {
+    "ciqual_code": "20020",
+    "food": "Courgette, chair et peau, crue"
+  },
+  "poivron": {
+    "ciqual_code": "20041",
+    "food": "Poivron, vert, jaune ou rouge, cru"
+  },
+  "poivron rouge": {
+    "ciqual_code": "20087",
+    "food": "Poivron rouge, cru"
+  },
+  "poivron vert": {
+    "ciqual_code": "20085",
+    "food": "Poivron vert, cru"
+  },
+  "aubergine": {
+    "ciqual_code": "20053",
+    "food": "Aubergine, crue"
+  },
+  "champignon": {
+    "ciqual_code": "20010",
+    "food": "Champignon, tout type, cru"
+  },
+  "champignon de paris": {
+    "ciqual_code": "20056",
+    "food": "Champignon de Paris ou champignon de couche, cru"
+  },
+  "poireau": {
+    "ciqual_code": "20039",
+    "food": "Poireau, cru"
+  },
+  "epinard": {
+    "ciqual_code": "20059",
+    "food": "Épinard, cru"
+  },
+  "pousse d epinard": {
+    "ciqual_code": "20059",
+    "food": "Épinard, cru"
+  },
+  "brocoli": {
+    "ciqual_code": "20057",
+    "food": "Brocoli, cru"
+  },
+  "chou fleur": {
+    "ciqual_code": "20016",
+    "food": "Chou-fleur, cru"
+  },
+  "chou rouge": {
+    "ciqual_code": "20014",
+    "food": "Chou rouge, cru"
+  },
+  "concombre": {
+    "ciqual_code": "20019",
+    "food": "Concombre, chair et peau, cru"
+  },
+  "celeri": {
+    "ciqual_code": "20023",
+    "food": "Céleri branche, cru"
+  },
+  "celeri rave": {
+    "ciqual_code": "20055",
+    "food": "Céleri-rave, cru"
+  },
+  "potiron": {
+    "ciqual_code": "20044",
+    "food": "Potiron, cru"
+  },
+  "haricot vert": {
+    "ciqual_code": "20061",
+    "food": "Haricot vert, cru"
+  },
+  "petit pois": {
+    "ciqual_code": "20084",
+    "food": "Petits pois, surgelés, crus"
+  },
+  "mais": {
+    "ciqual_code": "20066",
+    "food": "Maïs doux, appertisé, égoutté"
+  },
+  "salade": {
+    "ciqual_code": "20031",
+    "food": "Laitue, crue"
+  },
+  "laitue": {
+    "ciqual_code": "20031",
+    "food": "Laitue, crue"
+  },
+  "radis": {
+    "ciqual_code": "20045",
+    "food": "Radis rouge, cru"
+  },
+  "betterave": {
+    "ciqual_code": "20003",
+    "food": "Betterave rouge, cuite"
+  },
+  "fenouil": {
+    "ciqual_code": "20028",
+    "food": "Fenouil, cru"
+  },
+  "gingembre": {
+    "ciqual_code": "11074",
+    "food": "Gingembre, racine fraîche"
+  },
+  "piment": {
+    "ciqual_code": "20151",
+    "food": "Piment, cru"
+  },
+  "citron": {
+    "ciqual_code": "13009",
+    "food": "Citron, chair sans peau, sans pépins, cru"
+  },
+  "jus de citron": {
+    "ciqual_code": "2007",
+    "food": "Jus de citron, fait maison"
+  },
+  "zeste de citron": {
+    "ciqual_code": "13125",
+    "food": "Citron, zeste, cru"
+  },
+  "citron vert": {
+    "ciqual_code": "13067",
+    "food": "Citron vert ou lime, chair sans peau, sans pépins, cru"
+  },
+  "jus de citron vert": {
+    "ciqual_code": "2030",
+    "food": "Jus de citron vert, frais"
+  },
+  "pomme": {
+    "ciqual_code": "13039",
+    "food": "Pomme, chair et peau, crue"
+  },
+  "banane": {
+    "ciqual_code": "13005",
+    "food": "Banane, chair sans peau, crue"
+  },
+  "avocat": {
+    "ciqual_code": "13004",
+    "food": "Avocat, chair sans peau, sans noyau, cru"
+  },
+  "orange": {
+    "ciqual_code": "13034",
+    "food": "Orange, chair sans peau, sans pépins, crue"
+  },
+  "persil": {
+    "ciqual_code": "11014",
+    "food": "Persil, frais"
+  },
+  "coriandre": {
+    "ciqual_code": "11094",
+    "food": "Coriandre, fraiche"
+  },
+  "basilic": {
+    "ciqual_code": "11033",
+    "food": "Basilic, frais"
+  },
+  "ciboulette": {
+    "ciqual_code": "11003",
+    "food": "Ciboule ou ciboulette, fraîche"
+  },
+  "menthe": {
+    "ciqual_code": "11027",
+    "food": "Menthe, fraîche"
+  },
+  "thym": {
+    "ciqual_code": "11070",
+    "food": "Thym, frais"
+  },
+  "romarin": {
+    "ciqual_code": "11068",
+    "food": "Romarin, frais"
+  },
+  "laurier": {
+    "ciqual_code": "11053",
+    "food": "Laurier, feuille"
+  },
+  "feuille de laurier": {
+    "ciqual_code": "11053",
+    "food": "Laurier, feuille"
+  },
+  "herbe de provence": {
+    "ciqual_code": "11060",
+    "food": "Herbes de Provence, séchées"
+  },
+  "cumin": {
+    "ciqual_code": "11042",
+    "food": "Cumin, graine"
+  },
+  "curry": {
+    "ciqual_code": "11005",
+    "food": "Curry, poudre"
+  },
+  "paprika": {
+    "ciqual_code": "11049",
+    "food": "Paprika, poudre"
+  },
+  "cannelle": {
+    "ciqual_code": "11025",
+    "food": "Cannelle, poudre"
+  },
+  "curcuma": {
+    "ciqual_code": "11089",
+    "food": "Curcuma, poudre"
+  },
+  "muscade": {
+    "ciqual_code": "11048",
+    "food": "Noix de muscade"
+  },
+  "noix de muscade": {
+    "ciqual_code": "11048",
+    "food": "Noix de muscade"
+  },
+  "piment d espelette": {
+    "ciqual_code": "11088",
+    "food": "Poivre de Cayenne ou piment de Cayenne, poudre"
+  },
+  "vanille": {
+    "ciqual_code": "11057",
+    "food": "Vanille, gousse"
+  },
+  "gousse de vanille": {
+    "ciqual_code": "11057",
+    "food": "Vanille, gousse"
+  },
+  "poulet": {
+    "ciqual_code": "36017",
+    "food": "Poulet, filet sans peau cru"
+  },
+  "blanc de poulet": {
+    "ciqual_code": "36017",
+    "food": "Poulet, filet sans peau cru"
+  },
+  "filet de poulet": {
+    "ciqual_code": "36017",
+    "food": "Poulet, filet sans peau cru"
+  },
+  "escalope de poulet": {
+    "ciqual_code": "36017",
+    "food": "Poulet, filet sans peau cru"
+  },
+  "cuisse de poulet": {
+    "ciqual_code": "36002",
+    "food": "Poulet, cuisse, viande et peau crue"
+  },
+  "dinde": {
+    "ciqual_code": "36304",
+    "food": "Dinde, escalope crue"
+  },
+  "escalope de dinde": {
+    "ciqual_code": "36304",
+    "food": "Dinde, escalope crue"
+  },
+  "boeuf hache": {
+    "ciqual_code": "6254",
+    "food": "Boeuf, steak haché 15% MG cru"
+  },
+  "viande hachee": {
+    "ciqual_code": "6254",
+    "food": "Boeuf, steak haché 15% MG cru"
+  },
+  "steak hache": {
+    "ciqual_code": "6254",
+    "food": "Boeuf, steak haché 15% MG cru"
+  },
+  "lardon": {
+    "ciqual_code": "28720",
+    "food": "Lardon fumé, cru"
+  },
+  "lardon fume": {
+    "ciqual_code": "28720",
+    "food": "Lardon fumé, cru"
+  },
+  "jambon": {
+    "ciqual_code": "28910",
+    "food": "Jambon cuit, choix"
+  },
+  "jambon blanc": {
+    "ciqual_code": "28910",
+    "food": "Jambon cuit, choix"
+  },
+  "jambon cru": {
+    "ciqual_code": "28800",
+    "food": "Jambon cru"
+  },
+  "chorizo": {
+    "ciqual_code": "30315",
+    "food": "Chorizo"
+  },
+  "poitrine fumee": {
+    "ciqual_code": "28502",
+    "food": "Poitrine de porc en salaison, fumée, crue"
+  },
+  "filet mignon": {
+    "ciqual_code": "28204",
+    "food": "Porc, filet mignon cru"
+  },
+  "saumon": {
+    "ciqual_code": "26036",
+    "food": "Saumon, élevage, cru"
+  },
+  "pave de saumon": {
+    "ciqual_code": "26036",
+    "food": "Saumon, élevage, cru"
+  },
+  "saumon fume": {
+    "ciqual_code": "26037",
+    "food": "Saumon fumé"
+  },
+  "thon": {
+    "ciqual_code": "26039",
+    "food": "Thon, au naturel, appertisé, égoutté"
+  },
+  "cabillaud": {
+    "ciqual_code": "26043",
+    "food": "Cabillaud, cru"
+  },
+  "crevette": {
+    "ciqual_code": "10007",
+    "food": "Crevette, cuite"
+  },
+  "pois chiche": {
+    "ciqual_code": "20532",
+    "food": "Pois chiche, appertisé, égoutté"
+  },
+  "lentille": {
+    "ciqual_code": "20359",
+    "food": "Lentille, sèche (aliment moyen)"
+  },
+  "lentille corail": {
+    "ciqual_code": "20535",
+    "food": "Lentille corail, sèche"
+  },
+  "lentille verte": {
+    "ciqual_code": "20585",
+    "food": "Lentille verte, sèche"
+  },
+  "haricot rouge": {
+    "ciqual_code": "20524",
+    "food": "Haricot rouge, appertisé, égoutté"
+  },
+  "haricot blanc": {
+    "ciqual_code": "20511",
+    "food": "Haricot blanc, appertisé, égoutté"
+  },
+  "tofu": {
+    "ciqual_code": "20904",
+    "food": "Tofu nature, préemballé"
+  },
+  "tofu fume": {
+    "ciqual_code": "20912",
+    "food": "Tofu fumé, préemballé"
+  },
+  "tempeh": {
+    "ciqual_code": "20917",
+    "food": "Tempeh"
+  },
+  "seitan": {
+    "ciqual_code": "25598",
+    "food": "Seitan, préemballé"
+  },
+  "bouillon": {
+    "ciqual_code": null,
+    "food": null,
+    "note": "bouillon sans précision : volaille, boeuf ou légumes ? Ne pas deviner"
+  }
+}
