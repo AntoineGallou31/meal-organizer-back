@@ -3,6 +3,7 @@ const supabase = require('../services/supabase');
 const { APIError, handleError } = require('../services/errorHandler');
 const { mapRecipeWithCategories } = require('../services/recipeMapper');
 const { toIsoWeek } = require('../services/recipeRecommendation');
+const { isMissingColumnError } = require('../services/schemaFallback');
 const router = Router();
 
 const SLOT_VALUES = ['lunch', 'dinner'];
@@ -25,15 +26,6 @@ const getWeekDays = (weekString) => {
 const getDayName = (date, locale = 'fr-FR') => {
     return new Date(date).toLocaleDateString(locale, { weekday: 'long' });
 }
-
-const isMissingColumnError = (error) => {
-    const message = (error?.message ?? '').toLowerCase();
-    return message.includes('column') && (
-        message.includes('does not exist') ||
-        message.includes('not found') ||
-        message.includes('schema cache')
-    );
-};
 
 const MEAL_PLAN_ITEM_SELECT_CANDIDATES = [
     'id,date,slot,position,type,recipe_id,note,created_at,recipes(id,title,image_url,prep_time,source_url,ingredients,steps,recipe_categories(category_id,categories(id,name,color)))',

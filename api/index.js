@@ -36,5 +36,6 @@ app.get('/ping', (_req, res) => {
 app.use('/api', blockWritesInDemo, require('../src/routes/categories'));
 app.use('/api', blockWritesInDemo, require('../src/routes/recipes'));
 app.use('/api', blockWritesInDemo, require('../src/routes/mealPlan'));
+app.use('/api', blockWritesInDemo, require('../src/routes/foods'));
 
 module.exports = app;

@@ -13,11 +13,54 @@ const { getCookCountMap, getCookCountForRecipe } = require('../services/recipePo
 const { getSeasonalSuggestions, isValidDateString } = require('../services/recipeRecommendation');
 const { getRecipeStats } = require('../services/recipeStats');
 const { onlyIncompleteRecipes } = require('../services/recipeCompleteness');
+const { analyzeRecipe, getDefaultMatcher, toGrams } = require('../services/ingredientAnalyzer');
+const { FOOD_COLUMNS } = require('../services/foodMatchers');
+const { selectWithNutrition } = require('../services/schemaFallback');
 const validateUUID = require('../middlewares/validateUUID');
 const { APIError, handleError } = require('../services/errorHandler');
 const router = Router();
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const DIET_TAGS = ['viande', 'poisson', 'vegetarien', 'vegan', 'sans-gluten', 'sans-lactose'];
+const MAIN_PROTEINS = ['animale', 'oeufs-laitiers', 'vegetale'];
+// Après une correction d'ingrédient, nombre maximal d'autres recettes réanalysées
+// dans la même requête (les suivantes le seront par analyzeRecipes.js)
+const MAX_REANALYZED_RECIPES = 40;
+const REANALYZE_CONCURRENCY = 4;
+
+// L'analyse nutritionnelle ne doit jamais faire échouer un enregistrement
+async function analyzeSafely(recipeId, endpoint) {
+  try {
+    await analyzeRecipe(recipeId);
+  } catch (error) {
+    console.error(`[nutrition] Analyse impossible pour la recette ${recipeId} (${endpoint}) :`, error.message || error);
+  }
+}
+
+// [{ position, rawText, foodId, foodName, grams, status, matchScore, matchMethod }]
+// Liste vide si la recette n'a pas encore été analysée (ou si la table n'existe pas encore).
+async function fetchIngredientsAnalysis(recipeId) {
+  const { data, error } = await supabase
+    .from('recipe_ingredients')
+    .select('position,raw_text,food_id,grams,status,match_score,match_method,foods(name)')
+    .eq('recipe_id', recipeId)
+    .order('position', { ascending: true });
+  if (error) {
+    console.error(`[nutrition] Lecture de l'analyse impossible pour la recette ${recipeId} :`, error.message);
+    return [];
+  }
+  return (data || []).map((row) => ({
+    position: row.position,
+    rawText: row.raw_text,
+    foodId: row.food_id ?? null,
+    foodName: row.foods?.name ?? null,
+    grams: row.grams ?? null,
+    status: row.status,
+    matchScore: row.match_score ?? null,
+    matchMethod: row.match_method ?? null,
+  }));
+}
 
 // Radicaux de verbes de cuisine, comparés en début de mot sur un texte sans accents :
 // « melang » reconnaît mélanger, mélangez, mélangeant...
@@ -295,6 +338,8 @@ async function persistImportedRecipe({
     await assignCategoryToRecipe(inserted.id, categoryId);
   }
 
+  await analyzeSafely(inserted.id, 'POST /api/recipes/import');
+
   const recipeWithCategories = await fetchRecipeWithCategoriesById(inserted.id);
 
   return {
@@ -333,11 +378,11 @@ function parsePositiveInteger(value, fallback) {
 }
 
 async function fetchRecipeWithCategoriesById(recipeId) {
-  const { data, error } = await supabase
+  const { data, error } = await selectWithNutrition((extraColumns) => supabase
     .from('recipes')
-    .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories(categories(id,name,color))')
+    .select(`${extraColumns}id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories(categories(id,name,color))`)
     .eq('id', recipeId)
-    .maybeSingle();
+    .maybeSingle());
 
   if (error) throw error;
   return data;
@@ -435,6 +480,12 @@ router.get('/recipes', async (req, res) => {
     const paged = req.query.page !== undefined || req.query.limit !== undefined || summary;
     // incomplete=true : seulement les recettes sans ingredients ou sans etapes
     const incomplete = req.query.incomplete === 'true';
+    // diet=vegetarien,sans-gluten : la recette doit porter toutes ces etiquettes
+    const diet = typeof req.query.diet === 'string'
+      ? [...new Set(req.query.diet.split(',').map((tag) => tag.trim()).filter(Boolean))]
+      : [];
+    // protein=vegetale|animale|oeufs-laitiers
+    const protein = typeof req.query.protein === 'string' ? req.query.protein.trim() : '';
 
     // Validation
     if (categoryId && !UUID_REGEX.test(categoryId)) {
@@ -442,6 +493,13 @@ router.get('/recipes', async (req, res) => {
     }
     if (req.query.prepMax !== undefined && Number.isNaN(prepMax)) {
       throw new APIError('Le paramètre prepMax doit être un nombre entier', 400, 'INVALID_PREP_MAX');
+    }
+    const unknownTags = diet.filter((tag) => !DIET_TAGS.includes(tag));
+    if (unknownTags.length) {
+      throw new APIError(`Régime inconnu : ${unknownTags.join(', ')}`, 400, 'INVALID_DIET', { allowed: DIET_TAGS });
+    }
+    if (protein && !MAIN_PROTEINS.includes(protein)) {
+      throw new APIError(`Protéine inconnue : ${protein}`, 400, 'INVALID_PROTEIN', { allowed: MAIN_PROTEINS });
     }
 
     const ingredientTerms = [];
@@ -456,26 +514,6 @@ router.get('/recipes', async (req, res) => {
     }
 
     const selectString = buildRecipeSelectString({ summary: paged, categoryId });
-    let query = supabase.from('recipes').select(selectString);
-
-    if (search) {
-      query = query.ilike('title', `%${search}%`);
-    }
-    if (categoryId) {
-      query = query.eq('recipe_categories.category_id', categoryId);
-    }
-    if (month) {
-      query = query.contains('months', [month]);
-    }
-    if (!Number.isNaN(prepMax)) {
-      query = query.lte('prep_time', prepMax);
-    }
-    if (ingredientFilteredIds) {
-      query = query.in('id', ingredientFilteredIds);
-    }
-    if (incomplete) {
-      query = onlyIncompleteRecipes(query);
-    }
 
     const sortByPopularity = sort === 'popular';
     // includeCookCount=true : chaque recette porte cookCount, quel que soit le tri
@@ -484,30 +522,63 @@ router.get('/recipes', async (req, res) => {
     const neverCooked = req.query.cooked === 'never';
     const cookCountMap = sortByPopularity || includeCookCount || neverCooked ? await getCookCountMap() : null;
 
-    // Exclusion faite dans la requete, avant la pagination, pour que les pages restent justes
-    if (neverCooked) {
-      const cookedIds = Object.keys(cookCountMap);
-      if (cookedIds.length) {
-        query = query.not('id', 'in', `(${cookedIds.join(',')})`);
+    // extraColumns : colonnes nutrition, absentes tant que nutrition.sql n'a pas ete execute
+    const buildQuery = (extraColumns) => {
+      let query = supabase.from('recipes').select(`${extraColumns}${selectString}`);
+
+      if (search) {
+        query = query.ilike('title', `%${search}%`);
       }
-    }
+      if (categoryId) {
+        query = query.eq('recipe_categories.category_id', categoryId);
+      }
+      if (month) {
+        query = query.contains('months', [month]);
+      }
+      if (!Number.isNaN(prepMax)) {
+        query = query.lte('prep_time', prepMax);
+      }
+      if (ingredientFilteredIds) {
+        query = query.in('id', ingredientFilteredIds);
+      }
+      if (incomplete) {
+        query = onlyIncompleteRecipes(query);
+      }
+      if (diet.length) {
+        query = query.contains('diet_tags', diet);
+      }
+      if (protein) {
+        query = query.eq('main_protein', protein);
+      }
 
-    if (sort === 'oldest') {
-      query = query.order('created_at', { ascending: true });
-    } else if (sort === 'prepTime') {
-      query = query.order('prep_time', { ascending: true });
-    } else if (!sortByPopularity) {
-      query = query.order('created_at', { ascending: false });
-    }
+      // Exclusion faite dans la requete, avant la pagination, pour que les pages restent justes
+      if (neverCooked) {
+        const cookedIds = Object.keys(cookCountMap);
+        if (cookedIds.length) {
+          query = query.not('id', 'in', `(${cookedIds.join(',')})`);
+        }
+      }
 
-    // Le tri par popularite depend d'un compte calcule en dehors de la DB,
-    // donc on ne peut pas paginer via `range` avant d'avoir trie en memoire.
-    if (paged && !sortByPopularity) {
-      const offset = (page - 1) * limit;
-      query = query.range(offset, offset + limit);
-    }
+      if (sort === 'oldest') {
+        query = query.order('created_at', { ascending: true });
+      } else if (sort === 'prepTime') {
+        query = query.order('prep_time', { ascending: true });
+      } else if (!sortByPopularity) {
+        query = query.order('created_at', { ascending: false });
+      }
 
-    const { data, error } = await query;
+      // Le tri par popularite depend d'un compte calcule en dehors de la DB,
+      // donc on ne peut pas paginer via `range` avant d'avoir trie en memoire.
+      if (paged && !sortByPopularity) {
+        const offset = (page - 1) * limit;
+        query = query.range(offset, offset + limit);
+      }
+      return query;
+    };
+
+    const { data, error } = await selectWithNutrition(buildQuery, {
+      requireColumns: diet.length > 0 || Boolean(protein),
+    });
     if (error) {
       throw new APIError(
         'Impossible de récupérer les recettes',
@@ -601,13 +672,13 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
     let similarRecipes = [];
 
     if (recipeCategoryIds.length) {
-      const { data: similar, error: similarError } = await supabase
+      const { data: similar, error: similarError } = await selectWithNutrition((extraColumns) => supabase
         .from('recipes')
-        .select('id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories!inner(category_id,categories(id,name,color))')
+        .select(`${extraColumns}id,title,image_url,prep_time,servings,ingredients,steps,source_url,months,created_at,recipe_categories!inner(category_id,categories(id,name,color))`)
         .neq('id', req.params.id)
         .in('recipe_categories.category_id', recipeCategoryIds)
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(20));
 
       if (similarError) {
         throw new APIError(
@@ -628,10 +699,12 @@ router.get('/recipes/:id', validateUUID('id'), async (req, res) => {
     }
 
     const cookCount = await getCookCountForRecipe(req.params.id);
+    const ingredientsAnalysis = await fetchIngredientsAnalysis(req.params.id);
 
     res.json({
       ...mapRecipeWithCategories(data, { cookCount }),
       similarRecipes,
+      ingredientsAnalysis,
     });
   } catch (error) {
     handleError(error, res, { endpoint: 'GET /api/recipes/:id', recipeId: req.params.id });
@@ -692,6 +765,8 @@ router.post('/recipes', async (req, res) => {
       autoDetected = true;
       confident = detection.confident;
     }
+
+    await analyzeSafely(data.id, 'POST /api/recipes');
 
     const withCategories = await fetchRecipeWithCategoriesById(data.id);
 
@@ -787,10 +862,149 @@ router.put('/recipes/:id', validateUUID('id'), async (req, res) => {
       throw new APIError('Recette non trouvée avec cet ID', 404, 'RECIPE_NOT_FOUND');
     }
 
+    if (payload.ingredients !== undefined || payload.servings !== undefined) {
+      await analyzeSafely(data.id, 'PUT /api/recipes/:id');
+    }
+
     const withCategories = await fetchRecipeWithCategoriesById(data.id);
     res.json(mapRecipeWithCategories(withCategories));
   } catch (error) {
     handleError(error, res, { endpoint: 'PUT /api/recipes/:id', recipeId: req.params.id });
+  }
+});
+
+// Lignes de recipe_ingredients à réanalyser après un nouvel alias : même nom,
+// pas encore corrigées à la main, et non reconnues ou reconnues par similarité
+async function findRecipesToReanalyze(name, excludedRecipeId) {
+  const ids = new Set();
+  for (const narrow of [
+    (query) => query.is('food_id', null),
+    (query) => query.eq('match_method', 'similarity'),
+  ]) {
+    const { data, error } = await narrow(supabase
+      .from('recipe_ingredients')
+      .select('recipe_id')
+      .eq('name', name)
+      .eq('status', 'auto'));
+    if (error) throw error;
+    (data || []).forEach((row) => { if (row.recipe_id !== excludedRecipeId) ids.add(row.recipe_id); });
+  }
+  return [...ids];
+}
+
+// PUT /api/recipes/:id/ingredients/:position
+// Corps : { foodId, grams? } pour choisir l'aliment, ou { status: 'ignored', grams? }.
+// La ligne est marquée comme décidée à la main et gardée lors des prochaines analyses
+// tant que son texte ne change pas.
+router.put('/recipes/:id/ingredients/:position', validateUUID('id'), async (req, res) => {
+  try {
+    const recipeId = req.params.id;
+    const position = Number(req.params.position);
+    const { foodId, status, grams } = req.body || {};
+    const ignoring = status === 'ignored';
+    const gramsProvided = grams !== undefined && grams !== null;
+
+    if (!Number.isInteger(position) || position < 0) {
+      throw new APIError('position doit être un entier >= 0', 400, 'INVALID_POSITION');
+    }
+    if (status !== undefined && !ignoring) {
+      throw new APIError('status ne peut valoir que "ignored"', 400, 'INVALID_STATUS');
+    }
+    if (ignoring === Boolean(foodId)) {
+      throw new APIError('Envoyer soit foodId, soit status: "ignored"', 400, 'INVALID_INGREDIENT_CORRECTION');
+    }
+    if (foodId && (typeof foodId !== 'string' || !UUID_REGEX.test(foodId))) {
+      throw new APIError('foodId doit être un UUID', 400, 'INVALID_UUID');
+    }
+    if (gramsProvided && !(typeof grams === 'number' && Number.isFinite(grams) && grams >= 0)) {
+      throw new APIError('grams doit être un nombre >= 0', 400, 'INVALID_GRAMS');
+    }
+
+    const { data: line, error: lineError } = await supabase
+      .from('recipe_ingredients')
+      .select('position,name,quantity,unit')
+      .eq('recipe_id', recipeId)
+      .eq('position', position)
+      .maybeSingle();
+    if (lineError) throw lineError;
+    if (!line) {
+      throw new APIError('Ligne d\'ingrédient introuvable', 404, 'INGREDIENT_LINE_NOT_FOUND');
+    }
+
+    let update;
+    if (ignoring) {
+      update = { status: 'ignored', match_method: 'manual', food_id: null, match_score: null, grams: gramsProvided ? grams : null };
+    } else {
+      const { data: food, error: foodError } = await supabase
+        .from('foods')
+        .select(FOOD_COLUMNS.join(','))
+        .eq('id', foodId)
+        .maybeSingle();
+      if (foodError) throw foodError;
+      if (!food) throw new APIError('Aliment introuvable', 400, 'FOOD_NOT_FOUND');
+      const computed = gramsProvided ? grams : toGrams(line.quantity, line.unit, food);
+      update = {
+        status: 'checked',
+        match_method: 'manual',
+        food_id: foodId,
+        match_score: null,
+        grams: computed === null ? null : Math.round(computed * 10) / 10,
+      };
+    }
+
+    const { error: updateError } = await supabase
+      .from('recipe_ingredients')
+      .update(update)
+      .eq('recipe_id', recipeId)
+      .eq('position', position);
+    if (updateError) throw updateError;
+
+    // Le nom de la ligne devient un alias de l'aliment choisi (s'il n'en existe pas déjà un)
+    const matcher = getDefaultMatcher();
+    let aliasCreated = false;
+    if (!ignoring && line.name) {
+      const { data: inserted, error: aliasError } = await supabase
+        .from('food_aliases')
+        .upsert({ alias: line.name, food_id: foodId }, { onConflict: 'alias', ignoreDuplicates: true })
+        .select('alias');
+      if (aliasError) throw aliasError;
+      aliasCreated = (inserted || []).length > 0;
+      matcher.invalidate();
+    }
+
+    const result = await analyzeRecipe(recipeId, { matcher });
+
+    // Les autres recettes où ce nom n'était pas reconnu (ou seulement par similarité)
+    let reanalyzed = 0;
+    let remaining = 0;
+    if (!ignoring && line.name) {
+      const others = await findRecipesToReanalyze(line.name, recipeId);
+      const batch = others.slice(0, MAX_REANALYZED_RECIPES);
+      remaining = others.length - batch.length;
+      for (let start = 0; start < batch.length; start += REANALYZE_CONCURRENCY) {
+        await Promise.all(batch.slice(start, start + REANALYZE_CONCURRENCY).map((otherId) =>
+          analyzeRecipe(otherId, { matcher }).then(
+            () => { reanalyzed += 1; },
+            (error) => console.error(`[nutrition] Réanalyse impossible pour la recette ${otherId} :`, error.message || error)
+          )));
+      }
+    }
+
+    res.json({
+      nutrition: result.nutrition,
+      dietTags: result.dietTags,
+      mainProtein: result.mainProtein,
+      ingredientsAnalysis: await fetchIngredientsAnalysis(recipeId),
+      aliasCreated,
+      reanalyzedRecipes: reanalyzed,
+      remainingRecipes: remaining,
+    });
+  } catch (error) {
+    handleError(error, res, {
+      endpoint: 'PUT /api/recipes/:id/ingredients/:position',
+      recipeId: req.params.id,
+      position: req.params.position,
+    });
   }
 });
 

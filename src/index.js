@@ -36,6 +36,7 @@ app.get('/ping', (_req, res) => {
 app.use('/api', blockWritesInDemo, require('./routes/categories'));
 app.use('/api', blockWritesInDemo, require('./routes/recipes'));
 app.use('/api', blockWritesInDemo, require('./routes/mealPlan'));
+app.use('/api', blockWritesInDemo, require('./routes/foods'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

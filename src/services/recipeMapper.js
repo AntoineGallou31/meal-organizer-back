@@ -28,6 +28,11 @@ function mapRecipeWithCategories(recipe, { cookCount } = {}) {
     createdAt: recipe.created_at,
     restrictedDetail,
     cookCount: Number.isInteger(cookCount) ? cookCount : 0,
+    // Analyse nutritionnelle (src/services/ingredientAnalyzer.js) ; vides tant
+    // que la recette n'a pas été analysée
+    nutrition: recipe.nutrition ?? null,
+    dietTags: Array.isArray(recipe.diet_tags) ? recipe.diet_tags : [],
+    mainProtein: recipe.main_protein ?? null,
   };
 }
 
