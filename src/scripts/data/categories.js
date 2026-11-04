@@ -1,4 +1,4 @@
-// Les 21 categories de reference : nom, couleur et mots-cles du classement automatique.
+// Les categories de reference : nom, couleur et mots-cles du classement automatique.
 // Mots-cles sans accents et au singulier : le classement ajoute lui-meme un pluriel
 // optionnel en s ou x a chaque mot (voir services/categoryMatcher.js).
 // Utilise par seedCategories.js, migrateCategories.js et checkCategorizer.js.
@@ -11,7 +11,7 @@ const CATEGORIES = [
     name: 'Plats de légumes',
     color: '#22C55E',
     keywords: list(`legume, gratin, gratine, gratinee, poelee, ratatouille, tian, farci, farcie, puree,
-      pomme de terre, patate douce, crumble de legume, crumble sale, crumble de tomate, crumble tomate,
+      pomme de terre, patate douce, crumble de legume, crumble aux legume, crumble sale, crumble de tomate, crumble tomate,
       crumble de courgette, tomate, courgette, aubergine, poivron, champignon, chou, carotte, poireau,
       endive, haricot vert, epinard, brocoli, butternut, potimarron, courge, fenouil`),
   },
@@ -20,8 +20,9 @@ const CATEGORIES = [
     color: '#D4A574',
     keywords: list(`pates, pasta, spaghetti, tagliatelle, fusilli, penne, linguine, lasagne, macaroni,
       coquillette, orzo, ravioli, tortellini, farfalle, rigatoni, cannelloni, canneloni, nouille, udon, soba,
-      crozet, conchiglie, conchiglioni, lumaconi, trofie, pappardelle, orecchiette, carbonara,
-      gratin de pates, gratin de crozet, gratin de macaroni, gratin de coquillette`),
+      conchiglie, conchiglioni, lumaconi, trofie, pappardelle, orecchiette, carbonara,
+      gratin de pates, gratin de macaroni, gratin de coquillette,
+      risotto de pates, risotto de coquillette, risotto de macaroni`),
   },
   {
     name: 'Salades',
@@ -38,7 +39,8 @@ const CATEGORIES = [
     name: 'Céréales & légumineuses',
     color: '#10B981',
     keywords: list(`quinoa, quinotto, semoule, couscous, boulgour, bulgur, sarrasin, orge, epeautre,
-      lentille, pois chiche, haricot rouge, haricot blanc, falafel, gratin de quinoa`),
+      lentille, pois chiche, haricot rouge, haricot blanc, falafel, gratin de quinoa, risotto de quinoa,
+      salade de quinoa, salade au quinoa`),
   },
   {
     name: 'Riz & risottos',
@@ -59,6 +61,11 @@ const CATEGORIES = [
     name: 'Gnocchis',
     color: '#F59E0B',
     keywords: list('gnocchi, gratin de gnocchi'),
+  },
+  {
+    name: 'Crozets',
+    color: '#A16207',
+    keywords: list('crozet, gratin de crozet, risotto de crozet'),
   },
   {
     name: 'Poissons & fruits de mer',

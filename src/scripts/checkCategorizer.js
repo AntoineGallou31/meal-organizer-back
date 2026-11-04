@@ -1,4 +1,4 @@
-// Verifie le classement automatique sur des titres connus, avec les 21 categories
+// Verifie le classement automatique sur des titres connus, avec les categories
 // de reference (data/categories.js). En memoire, sans la base.
 // Usage : node src/scripts/checkCategorizer.js
 const { buildMatchers, classifyTitle } = require('../services/categoryMatcher');
@@ -25,6 +25,12 @@ const CASES = [
   ['Buddha bowl au quinoa', 'Bowls & assiettes complètes'],
   ['Thé glacé à la pêche', 'Boissons & cocktails'],
   ['Moussaka', 'Sans catégorie'],
+  // Decisions de la revue des categories
+  ['Gratin de crozets aux poireaux', 'Crozets'],
+  ['Risotto de crozets au potiron', 'Crozets'],
+  ['Risotto de coquillettes aux petits pois', 'Pâtes'],
+  ['Risotto de quinoa à la courgette', 'Céréales & légumineuses'],
+  ['Salade de quinoa et pois chiches', 'Céréales & légumineuses'],
 ];
 
 const defaultName = CATEGORIES.find((category) => category.is_default).name;
